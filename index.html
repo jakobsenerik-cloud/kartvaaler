@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Kartbilde – fri forvrengning + GPS (med fallback)</title>
+<title>Kartbilde – fri forvrengning + GPS (stabil)</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
   html,body{margin:0;height:100%}
@@ -14,63 +14,59 @@
   .small{font-size:12px;color:#444}
   input[type=range]{width:140px}
   button{padding:6px 10px;border:1px solid #ccc;border-radius:8px;background:#fff;cursor:pointer}
+
+  /* Sikre riktig z-rekkefølge */
   .leaflet-marker-pane{ z-index: 10000 !important; }
-  .leaflet-warpPane-pane{ z-index: 350 !important; pointer-events: none !important; }
-  .leaflet-gpsPane-pane{ z-index: 800 !important; }
-  .warn{color:#b00020}
-  .ok{color:#0a7f2e}
+  .leaflet-warp-pane{ z-index: 350 !important; pointer-events: none !important; }
+  .leaflet-gps-pane{ z-index: 800 !important; }
 </style>
 </head>
 <body>
   <div class="panel">
     <button id="fitBtn">Vis kartområdet</button>
     <label class="small">Opasitet <input id="opacity" type="range" min="0" max="1" step="0.01" value="0.95"></label>
-
     <button id="fastBtn">Rask posisjon</button>
     <button id="preciseBtn">Presis posisjon</button>
     <label class="small"><input id="watchToggle" type="checkbox"> Følg posisjon</label>
     <label class="small"><input id="manualToggle" type="checkbox"> Manuell posisjon (klikk i kartet)</label>
-    <button id="setManualBtn">Vis test-dråpe</button>
-    <label class="small"><input id="netFallback" type="checkbox" checked> Tillat nettverks-fallback</label>
-
+    <button id="testBtn">Vis test-dråpe</button>
     <span id="status" class="small">Laster…</span>
   </div>
   <div id="map"></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    // ---- Konfig (hjørnene dine) ----
+  (function(){
+    // ---- Konfig ----
     const IMAGE_URL = "Turkart.png?v=" + Date.now();
+    // Låste hjørner (NW, NE, SE, SW) – dine verdier
     const CORNERS = [
-      [59.54593535667747, 10.765142440795898],  // NW
-      [59.539561484456776, 11.201162338256838], // NE
-      [59.380786150970934, 11.190948486328127], // SE
-      [59.387167906588274, 10.756945610046387]  // SW
+      [59.54593535667747, 10.765142440795898],
+      [59.539561484456776, 11.201162338256838],
+      [59.380786150970934, 11.190948486328127],
+      [59.387167906588274, 10.756945610046387]
     ];
     const GRID_COLS = 24, GRID_ROWS = 24;
 
+    const statusEl = document.getElementById('status');
+    const setStatus = (msg)=> statusEl.textContent = msg;
+
+    // ---- Kart ----
     const map = L.map('map');
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
       maxZoom:19, attribution:'&copy; OpenStreetMap-bidragsytere'
     }).addTo(map);
 
-    const fitBtn = document.getElementById('fitBtn');
-    const opacityInput = document.getElementById('opacity');
-    const statusEl = document.getElementById('status');
-
-    // --- Pane-rekkefølge ---
-    const warpPane = map.createPane('warpPane');
-    warpPane.classList.add('leaflet-warpPane-pane');
-    warpPane.style.zIndex = 350; warpPane.style.pointerEvents = 'none';
-    const gpsPane  = map.createPane('gpsPane');
-    gpsPane.classList.add('leaflet-gpsPane-pane');
-    gpsPane.style.zIndex = 800;
+    // Egen pane for warp (under markører)
+    const warpPane = map.createPane('warp'); warpPane.classList.add('leaflet-warp-pane');
+    // Pane for GPS-sirkel
+    const gpsPane = map.createPane('gps'); gpsPane.classList.add('leaflet-gps-pane');
 
     // ---- Last bilde og tegn (warp) ----
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = initWarp;
-    img.onerror = ()=> status('Klarte ikke å laste Turkart.png');
+    img.onerror = ()=> setStatus("Klarte ikke å laste Turkart.png");
     img.src = IMAGE_URL;
 
     function initWarp(){
@@ -81,8 +77,8 @@
       const ctx = canvas.getContext('2d');
 
       function setCanvasSize(){
-        const size = map.getSize();
-        canvas.width = size.x; canvas.height = size.y;
+        const sz = map.getSize();
+        canvas.width = sz.x; canvas.height = sz.y;
         const pos = map.containerPointToLayerPoint([0,0]);
         L.DomUtil.setPosition(canvas, pos);
       }
@@ -98,58 +94,63 @@
         const inv21=-a21/det, inv22=a11/det, inv23=-(inv21*s0.x+inv22*s0.y);
         const b11=d1.x-d0.x, b12=d2.x-d0.x, b13=d0.x;
         const b21=d1.y-d0.y, b22=d2.y-d0.y, b23=d0.y;
-        const a=b11*inv11+b12*inv21, b=b21*inv11+b22*inv21;
-        const c=b11*inv12+b12*inv22, d=b21*inv12+b22*inv22;
-        const e=b11*inv13+b12*inv23+b13, f=b21*inv13+b22*inv23+b23;
-        ctx.setTransform(a,b,c,d,e,f);
+        const A=b11*inv11+b12*inv21, B=b21*inv11+b22*inv21;
+        const C=b11*inv12+b12*inv22, D=b21*inv12+b22*inv22;
+        const E=b11*inv13+b12*inv23+b13, F=b21*inv13+b22*inv23+b23;
+        ctx.setTransform(A,B,C,D,E,F);
       }
-      function lerp(a,b,t){ return a+(b-a)*t; }
-      function lerpPt(p,q,t){ return {x: lerp(p.x,q.x,t), y: lerp(p.y,q.y,t)}; }
+      const lerp=(a,b,t)=> a+(b-a)*t;
+      const lerpPt=(p,q,t)=> ({x: lerp(p.x,q.x,t), y: lerp(p.y,q.y,t)});
 
       function render(){
-        setCanvasSize();
-        ctx.clearRect(0,0,canvas.width,canvas.height);
-        ctx.globalAlpha = parseFloat(opacityInput.value || "0.95");
+        try{
+          setCanvasSize();
+          ctx.clearRect(0,0,canvas.width,canvas.height);
+          ctx.globalAlpha = parseFloat(document.getElementById('opacity').value || "0.95");
 
-        const [pNW,pNE,pSE,pSW] = cornersLL.map(ll=>llToCanvas(ll));
+          const [pNW,pNE,pSE,pSW] = cornersLL.map(ll=>llToCanvas(ll));
 
-        for(let j=0;j<GRID_ROWS;j++){
-          const v0=j/GRID_ROWS, v1=(j+1)/GRID_ROWS;
-          const L0=lerpPt(pNW,pSW,v0), R0=lerpPt(pNE,pSE,v0);
-          const L1=lerpPt(pNW,pSW,v1), R1=lerpPt(pNE,pSE,v1);
+          for(let j=0;j<GRID_ROWS;j++){
+            const v0=j/GRID_ROWS, v1=(j+1)/GRID_ROWS;
+            const L0=lerpPt(pNW,pSW,v0), R0=lerpPt(pNE,pSE,v0);
+            const L1=lerpPt(pNW,pSW,v1), R1=lerpPt(pNE,pSE,v1);
 
-          for(let i=0;i<GRID_COLS;i++){
-            const u0=i/GRID_COLS, u1=(i+1)/GRID_COLS;
+            for(let i=0;i<GRID_COLS;i++){
+              const u0=i/GRID_COLS, u1=(i+1)/GRID_COLS;
 
-            const Q00=lerpPt(L0,R0,u0), Q10=lerpPt(L0,R0,u1);
-            const Q01=lerpPt(L1,R1,u0), Q11=lerpPt(L1,R1,u1);
+              const Q00=lerpPt(L0,R0,u0), Q10=lerpPt(L0,R0,u1);
+              const Q01=lerpPt(L1,R1,u0), Q11=lerpPt(L1,R1,u1);
 
-            const S00={x:u0*imgW,y:v0*imgH}, S10={x:u1*imgW,y:v0*imgH};
-            const S01={x:u0*imgW,y:v1*imgH}, S11={x:u1*imgW,y:v1*imgH};
+              const S00={x:u0*imgW,y:v0*imgH}, S10={x:u1*imgW,y:v0*imgH};
+              const S01={x:u0*imgW,y:v1*imgH}, S11={x:u1*imgW,y:v1*imgH};
 
-            ctx.save();
-            ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q10.x,Q10.y); ctx.lineTo(Q11.x,Q11.y); ctx.closePath(); ctx.clip();
-            setTriTransform(ctx, S00,S10,S11, Q00,Q10,Q11); ctx.drawImage(img,0,0); ctx.restore();
+              ctx.save();
+              ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q10.x,Q10.y); ctx.lineTo(Q11.x,Q11.y); ctx.closePath(); ctx.clip();
+              setTriTransform(ctx, S00,S10,S11, Q00,Q10,Q11); ctx.drawImage(img,0,0); ctx.restore();
 
-            ctx.save();
-            ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q11.x,Q11.y); ctx.lineTo(Q01.x,Q01.y); ctx.closePath(); ctx.clip();
-            setTriTransform(ctx, S00,S11,S01, Q00,Q11,Q01); ctx.drawImage(img,0,0); ctx.restore();
+              ctx.save();
+              ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q11.x,Q11.y); ctx.lineTo(Q01.x,Q01.y); ctx.closePath(); ctx.clip();
+              setTriTransform(ctx, S00,S11,S01, Q00,Q11,Q01); ctx.drawImage(img,0,0); ctx.restore();
+            }
           }
+        }catch(err){
+          console.error(err);
+          setStatus("Tegnefeil: " + err.message);
         }
       }
 
       const throttled=(()=>{let raf=null;return()=>{if(raf)return;raf=requestAnimationFrame(()=>{raf=null;render();});};})();
       map.on('move zoom resize', throttled);
-      opacityInput.addEventListener('input', throttled);
+      document.getElementById('opacity').addEventListener('input', throttled);
 
       const bbox = L.latLngBounds(cornersLL);
-      fitBtn.onclick = ()=> map.fitBounds(bbox,{padding:[10,10]});
+      document.getElementById('fitBtn').onclick = ()=> map.fitBounds(bbox,{padding:[10,10]});
       map.fitBounds(bbox,{padding:[10,10]});
       render();
-      status('Klar');
+      setStatus("Klar");
     }
 
-    // ---- GPS / Manuell posisjon + fallback ----
+    // ---- GPS / Manuell posisjon ----
     const dropIcon = L.divIcon({
       className: 'gps-drop',
       html: `<svg width="28" height="28" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg">
@@ -160,138 +161,60 @@
     });
 
     let userMarker=null, userDot=null, accuracyCircle=null;
-    const watchToggle = document.getElementById('watchToggle');
-    const manualToggle = document.getElementById('manualToggle');
-    const netFallback = document.getElementById('netFallback');
-
-    function placeUser(ll, accuracy=0){
+    const setUser = (ll, acc=0)=>{
       if (!userMarker) userMarker = L.marker(ll, {icon: dropIcon, zIndexOffset: 10000}).addTo(map);
       else userMarker.setLatLng(ll);
-      if (!userDot) userDot = L.circleMarker(ll, {radius: 7, weight:2, color:'#0b5cff', fill:true, fillOpacity:1, opacity:1}).addTo(map);
+      if (!userDot) userDot = L.circleMarker(ll, {radius:7, weight:2, color:'#0b5cff', fill:true, fillOpacity:1}).addTo(map);
       else userDot.setLatLng(ll);
-      if (!accuracyCircle) accuracyCircle = L.circle(ll, {pane:'gpsPane', radius: accuracy||0, color:'#2563eb', weight:1, fillOpacity:0.05}).addTo(map);
-      else { accuracyCircle.setLatLng(ll); if (accuracy!=null) accuracyCircle.setRadius(accuracy); }
+      if (!accuracyCircle) accuracyCircle = L.circle(ll, {pane:'gps', radius: acc||0, color:'#2563eb', weight:1, fillOpacity:0.05}).addTo(map);
+      else { accuracyCircle.setLatLng(ll); if (acc!=null) accuracyCircle.setRadius(acc); }
       map.setView(ll);
-    }
+    };
 
-    const status = (msg)=> statusEl.innerHTML = msg;
+    const GEO_FAST    = { enableHighAccuracy:false, timeout:12000, maximumAge:300000 };
+    const GEO_PRECISE = { enableHighAccuracy:true,  timeout:30000, maximumAge:0 };
+    let watchId=null;
 
-    function permHint(){
-      if (!navigator.permissions) return;
-      navigator.permissions.query({name:'geolocation'}).then(s=>{
-        if (s.state==='denied') status('<span class="warn">Posisjon blokkert: Sjekk nettstedsinnstillinger → Posisjon: Tillat.</span>');
-        else if (s.state==='prompt') status('Tillat posisjon når nettleseren spør.');
-      }).catch(()=>{});
-    }
-
-    function geoGet(opts){
-      return new Promise((resolve, reject)=>{
-        if (!navigator.geolocation) return reject(new Error('Geolocation ikke støttet'));
-        navigator.geolocation.getCurrentPosition(
-          pos => resolve({ kind:'geo', lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy }),
-          err => reject(Object.assign(new Error(err.message), {code: err.code})),
-          opts
-        );
-      });
-    }
-
-    async function ipFallback(){
-      // IP-basert posisjon (omtrentlig). Ingen nøkkel kreves.
-      try{
-        const r = await fetch('https://ipwho.is/?fields=success,latitude,longitude,city,country');
-        const j = await r.json();
-        if (j && j.success && typeof j.latitude==='number' && typeof j.longitude==='number'){
-          return { kind:'ip', lat: j.latitude, lng: j.longitude, acc: 20000, note: `${j.city||''} ${j.country||''}`.trim() };
-        }
-      }catch{}
-      return null;
-    }
-
-    async function tryLocate(mode){
-      const FAST    = { enableHighAccuracy:false, timeout:12000, maximumAge:300000 };
-      const PRECISE = { enableHighAccuracy:true,  timeout:30000, maximumAge:0 };
-
-      const opts = (mode==='precise') ? PRECISE : FAST;
-      status(`Henter ${mode==='precise'?'presis':'rask'} posisjon…`);
-
-      try{
-        const p = await geoGet(opts);
-        placeUser([p.lat, p.lng], p.acc);
-        status(`<span class="ok">Geolokasjon:</span> ${p.lat.toFixed(6)}, ${p.lng.toFixed(6)} (±${Math.round(p.acc)} m)`);
-        return true;
-      }catch(e){
-        const codes = {1:'PERMISSION_DENIED',2:'POSITION_UNAVAILABLE',3:'TIMEOUT'};
-        status(`<span class="warn">Geolokasjon feilet:</span> ${codes[e.code]||'ERROR'} – ${e.message}`);
-        permHint();
-        if (netFallback.checked){
-          const ip = await ipFallback();
-          if (ip){
-            placeUser([ip.lat, ip.lng], ip.acc);
-            status(`<span class="ok">Nettverks-fallback:</span> ${ip.lat.toFixed(6)}, ${ip.lng.toFixed(6)} (omtrentlig)`);
-            return true;
-          } else {
-            status('<span class="warn">Nettverks-fallback feilet også.</span>');
-          }
-        }
-        return false;
-      }
-    }
-
-    // Watch-håndtering: start bare hvis vi fikk en posisjon først
-    let watchActive=false, watchId=null;
-    function startWatch(mode){
-      if (!navigator.geolocation) return;
-      const opts = (mode==='precise')
-        ? { enableHighAccuracy:true, timeout:30000, maximumAge:0 }
-        : { enableHighAccuracy:false, timeout:15000, maximumAge:60000 };
-      if (watchId!=null){ navigator.geolocation.clearWatch(watchId); watchId=null; }
-      watchId = navigator.geolocation.watchPosition(
+    function geoOnce(opts){
+      if (!navigator.geolocation){ setStatus("Geolocation ikke støttet"); return; }
+      setStatus("Henter posisjon…");
+      navigator.geolocation.getCurrentPosition(
         pos => {
-          placeUser([pos.coords.latitude, pos.coords.longitude], pos.coords.accuracy);
-          status(`<span class="ok">Oppdatert:</span> ${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)} (±${Math.round(pos.coords.accuracy)} m)`);
+          setUser([pos.coords.latitude, pos.coords.longitude], pos.coords.accuracy);
+          setStatus(`Posisjon: ${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)} (±${Math.round(pos.coords.accuracy)} m)`);
+          if (document.getElementById('watchToggle').checked){
+            if (watchId!=null) navigator.geolocation.clearWatch(watchId);
+            watchId = navigator.geolocation.watchPosition(
+              p => { setUser([p.coords.latitude, p.coords.longitude], p.coords.accuracy); setStatus(`Oppdatert: ${p.coords.latitude.toFixed(6)}, ${p.coords.longitude.toFixed(6)} (±${Math.round(p.coords.accuracy)} m)`); },
+              e => { setStatus("Watch-feil: " + e.message); },
+              opts
+            );
+          }
         },
         err => {
-          const codes = {1:'PERMISSION_DENIED',2:'POSITION_UNAVAILABLE',3:'TIMEOUT'};
-          status(`<span class="warn">Watch feilet:</span> ${codes[err.code]||'ERROR'} – ${err.message}`);
+          const code = ({1:'PERMISSION_DENIED',2:'POSITION_UNAVAILABLE',3:'TIMEOUT'})[err.code]||'ERROR';
+          setStatus(`Geolokasjon feilet: ${code} – ${err.message}`);
         },
         opts
       );
-      watchActive=true;
     }
-    function stopWatch(){ if (watchId!=null) navigator.geolocation.clearWatch(watchId); watchId=null; watchActive=false; }
 
-    // Manuell klikk
-    map.on('click', e=>{
+    // Klikk i kartet ved manuell
+    map.on('click', (e)=>{
       if (!document.getElementById('manualToggle').checked) return;
-      placeUser(e.latlng, 0);
-      status(`Manuell posisjon: ${e.latlng.lat.toFixed(6)}, ${e.latlng.lng.toFixed(6)}`);
+      setUser(e.latlng, 0);
+      setStatus(`Manuell posisjon: ${e.latlng.lat.toFixed(6)}, ${e.latlng.lng.toFixed(6)}`);
     });
 
     // Knapper
-    document.getElementById('fastBtn').onclick = async ()=>{
-      stopWatch();
-      const ok = await tryLocate('fast');
-      if (ok && document.getElementById('watchToggle').checked) startWatch('fast');
-    };
-    document.getElementById('preciseBtn').onclick = async ()=>{
-      stopWatch();
-      const ok = await tryLocate('precise');
-      if (ok && document.getElementById('watchToggle').checked) startWatch('precise');
-    };
-    document.getElementById('watchToggle').onchange = (e)=>{
-      if (!e.target.checked) stopWatch();
-      // (watch startes etter vellykket fast/presis-knapp)
-    };
-
-    // Test-dråpe (koordinatene du oppga)
-    document.getElementById('setManualBtn').onclick = ()=>{
+    document.getElementById('fastBtn').onclick    = ()=> geoOnce(GEO_FAST);
+    document.getElementById('preciseBtn').onclick = ()=> geoOnce(GEO_PRECISE);
+    document.getElementById('testBtn').onclick    = ()=>{
       const ll = L.latLng(59.464434, 10.779567);
-      placeUser(ll, 0);
-      status(`Manuell posisjon: ${ll.lat.toFixed(6)}, ${ll.lng.toFixed(6)}`);
+      setUser(ll, 0);
+      setStatus(`Manuell posisjon: ${ll.lat.toFixed(6)}, ${ll.lng.toFixed(6)}`);
     };
-
-    // Først: tegn kart og warp i initWarp(); ikke autostart geolokasjon
-    function status(msg){ statusEl.innerHTML = msg; }
+  })();
   </script>
 </body>
 </html>
