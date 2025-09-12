@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Kartbilde – fri forvrengning + GPS</title>
+<title>Kartbilde – fri forvrengning + robust GPS</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
   html,body{margin:0;height:100%}
@@ -14,23 +14,25 @@
   .small{font-size:12px;color:#444}
   input[type=range]{width:140px}
   button{padding:6px 10px;border:1px solid #ccc;border-radius:8px;background:#fff;cursor:pointer}
+  .warn{color:#b00020}
 </style>
 </head>
 <body>
   <div class="panel">
     <button id="fitBtn">Vis kartområdet</button>
     <label class="small">Opasitet <input id="opacity" type="range" min="0" max="1" step="0.01" value="0.95"></label>
-    <button id="locateBtn">Vis/oppdater posisjon</button>
+    <button id="fastBtn">Rask posisjon</button>
+    <button id="preciseBtn">Presis posisjon</button>
     <label class="small"><input id="watchToggle" type="checkbox" checked> Følg posisjon</label>
+    <label class="small"><input id="manualToggle" type="checkbox"> Manuell posisjon (klikk i kartet)</label>
     <span id="status" class="small">Laster…</span>
   </div>
   <div id="map"></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    // ---- Konfig ----
-    const IMAGE_URL = "Turkart.png?v=" + Date.now(); // cache-buster
-    // Låste hjørner (WGS84) i rekkefølge: NW, NE, SE, SW
+    // ---- Konfig: hjørnene dine (WGS84) i rekkefølge NW, NE, SE, SW ----
+    const IMAGE_URL = "Turkart.png?v=" + Date.now();
     const CORNERS = [
       [59.54593535667747, 10.765142440795898],  // NW
       [59.539561484456776, 11.201162338256838], // NE
@@ -49,7 +51,7 @@
     const opacityInput = document.getElementById('opacity');
     const statusEl = document.getElementById('status');
 
-    // ---- Last bilde og tegn som fri-forvrengning via canvas ----
+    // ---- Last bilde og tegn (fri-forvrengning via canvas) ----
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = initWarp;
@@ -57,9 +59,7 @@
     img.src = IMAGE_URL;
 
     function initWarp(){
-      statusEl.textContent = "Tegner…";
       const imgW = img.naturalWidth, imgH = img.naturalHeight;
-
       const cornersLL = CORNERS.map(([lat,lng]) => L.latLng(lat,lng));
 
       const pane = map.getPanes().overlayPane;
@@ -136,13 +136,13 @@
       opacityInput.addEventListener('input', throttled);
 
       const bbox = L.latLngBounds(cornersLL);
-      document.getElementById('fitBtn').onclick = ()=> map.fitBounds(bbox,{padding:[10,10]});
+      fitBtn.onclick = ()=> map.fitBounds(bbox,{padding:[10,10]});
       map.fitBounds(bbox,{padding:[10,10]});
       render();
       statusEl.textContent = "Klar";
     }
 
-    // ---- GPS-dråpe ----
+    // ---- GPS: robust oppsett ----
     const dropIcon = L.divIcon({
       className: 'gps-drop',
       html: `<svg width="28" height="28" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg">
@@ -153,38 +153,69 @@
     });
 
     let userMarker=null, accuracyCircle=null;
+    const watchToggle = document.getElementById('watchToggle');
+    const manualToggle = document.getElementById('manualToggle');
 
-    function setStatus(msg){ statusEl.textContent = msg; }
+    const GEO_FAST   = { enableHighAccuracy:false, timeout:15000, maximumAge:60000 };
+    const GEO_PRECISE= { enableHighAccuracy:true,  timeout:30000, maximumAge:0 };
+
+    function setStatus(msg){ statusEl.innerHTML = msg; }
+
+    async function showPermissionHint(){
+      try{
+        if (!navigator.permissions) return;
+        const s = await navigator.permissions.query({name:'geolocation'});
+        if (s.state === 'denied') {
+          setStatus('<span class="warn">Posisjon blokkert: Klikk hengelåsen i adressefeltet → Nettstedsinnstillinger → Posisjon: Tillat</span>');
+        } else if (s.state === 'prompt') {
+          setStatus('Tillat posisjon når nettleseren spør.');
+        }
+      }catch{}
+    }
+
+    function updateMarker(ll, accuracy){
+      if (!userMarker) userMarker = L.marker(ll, {icon: dropIcon}).addTo(map);
+      else userMarker.setLatLng(ll);
+      if (!accuracyCircle) accuracyCircle = L.circle(ll, {radius: accuracy||0, color:'#2563eb', weight:1, fillOpacity:0.05}).addTo(map);
+      else { accuracyCircle.setLatLng(ll); if (accuracy!=null) accuracyCircle.setRadius(accuracy); }
+      if (watchToggle.checked) map.setView(ll);
+    }
 
     function onLocationFound(e){
       const {lat,lng,accuracy} = e;
-      const ll = [lat,lng];
-      if (!userMarker) userMarker = L.marker(ll, {icon: dropIcon}).addTo(map);
-      else userMarker.setLatLng(ll);
-      if (!accuracyCircle) accuracyCircle = L.circle(ll, {radius: accuracy, color:'#2563eb', weight:1, fillOpacity:0.05}).addTo(map);
-      else { accuracyCircle.setLatLng(ll); accuracyCircle.setRadius(accuracy); }
-
-      if (document.getElementById('watchToggle').checked) map.setView(ll);
+      updateMarker([lat,lng], accuracy);
       setStatus(`Posisjon: ${lat.toFixed(6)}, ${lng.toFixed(6)} (±${Math.round(accuracy)} m)`);
     }
-    function onLocationError(e){ setStatus('GPS-feil: ' + e.message); }
+    function onLocationError(e){
+      setStatus('<span class="warn">GPS-feil: ' + e.message + '</span>');
+      showPermissionHint();
+    }
 
-    function locateOnce(){ map.locate({setView:false, watch:false, enableHighAccuracy:true}); }
-    function startWatch(){ map.locate({setView:false, watch:true, enableHighAccuracy:true}); }
-    function stopWatch(){ map.stopLocate(); }
+    function locateOnce(opts){ map.locate(Object.assign({ setView:false, watch:false }, opts)); }
+    let watchActive = false;
+    function startWatch(opts){
+      map.stopLocate();
+      map.locate(Object.assign({ setView:false, watch:true }, opts));
+      watchActive = true;
+    }
+    function stopWatch(){ map.stopLocate(); watchActive = false; }
 
-    map.on('locationfound', onLocationFound);
-    map.on('locationerror', onLocationError);
-
-    document.getElementById('locateBtn').addEventListener('click', ()=>{
-      if (document.getElementById('watchToggle').checked) startWatch(); else { stopWatch(); locateOnce(); }
+    // Håndter manuell posisjon
+    map.on('click', (e)=>{
+      if (!manualToggle.checked) return;
+      updateMarker(e.latlng, 0);
+      setStatus(`Manuell posisjon: ${e.latlng.lat.toFixed(6)}, ${e.latlng.lng.toFixed(6)}`);
     });
-    document.getElementById('watchToggle').addEventListener('change', e=>{
-      if (e.target.checked) startWatch(); else stopWatch();
-    });
 
-    // start automatisk
-    startWatch();
+    // Knapper
+    document.getElementById('fastBtn').onclick = ()=> { stopWatch(); locateOnce(GEO_FAST); if (watchToggle.checked) startWatch(GEO_FAST); };
+    document.getElementById('preciseBtn').onclick = ()=> { stopWatch(); locateOnce(GEO_PRECISE); if (watchToggle.checked) startWatch(GEO_PRECISE); };
+    watchToggle.onchange = (e)=> { if (e.target.checked && !watchActive) startWatch(GEO_FAST); else if (!e.target.checked) stopWatch(); };
+
+    // Start med "rask posisjon" (ofte minst problemer)
+    locateOnce(GEO_FAST);
+    if (watchToggle.checked) startWatch(GEO_FAST);
+    showPermissionHint();
   </script>
 </body>
 </html>
