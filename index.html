@@ -1,241 +1,186 @@
-<!DOCTYPE html>
-<html lang="no">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Kartbilde – LIVE GPS (robust + feildiagnose)</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="anonymous"/>
-<style>
-  html,body{margin:0;height:100%}
-  #map{height:100vh;width:100%}
-  .panel{position:absolute;z-index:1000;top:10px;left:10px;background:rgba(255,255,255,.95);
-    padding:8px 10px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);
-    font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-  .small{font-size:12px;color:#444}
-  input[type=range]{width:140px}
-  button{padding:6px 10px;border:1px solid #ccc;border-radius:8px;background:#fff;cursor:pointer}
+// --- robust feildiagnose (nå vil vi få fil/linje) ---
+const statusEl = document.getElementById('status');
+const setStatus = (m) => statusEl.innerHTML = m;
 
-  /* Riktig z-rekkefølge */
-  .leaflet-tile-pane{ z-index: 200 !important; }
-  .leaflet-warp-pane{ z-index: 350 !important; pointer-events: none !important; }  /* bildet */
-  .leaflet-overlay-pane{ z-index: 400 !important; }
-  .leaflet-gps-pane{ z-index: 800 !important; }
-  .leaflet-marker-pane{ z-index: 10000 !important; }
-</style>
-</head>
-<body>
-  <div class="panel">
-    <button id="fitBtn">Vis kartområdet</button>
-    <label class="small">Bilde på <input id="imgToggle" type="checkbox" checked></label>
-    <label class="small">Opasitet <input id="opacity" type="range" min="0" max="1" step="0.01" value="0.95"></label>
+window.addEventListener('error', e => {
+  setStatus('JS-feil: ' + (e.message||'ukjent') + (e.filename?(' @ '+e.filename+':'+e.lineno+':'+e.colno):''));
+});
+window.addEventListener('unhandledrejection', e => {
+  const r = e.reason||{};
+  setStatus('Promise-feil: ' + (r.message||r));
+});
 
-    <button id="startFast">Start rask</button>
-    <button id="startPrecise">Start presis</button>
-    <button id="stopWatch">Stopp</button>
-    <label class="small"><input id="followToggle" type="checkbox" checked> Følg kartet</label>
+// --- konfig ---
+const IMAGE_URL = "Turkart.png?v="+Date.now();
+const CORNERS = [
+  [59.54593535667747, 10.765142440795898],  // NW
+  [59.539561484456776, 11.201162338256838], // NE
+  [59.380786150970934, 11.190948486328127], // SE
+  [59.387167906588274, 10.756945610046387]  // SW
+];
+const GRID_COLS = 24, GRID_ROWS = 24;
 
-    <button id="testBtn">Test-dråpe (59.464434, 10.779567)</button>
-    <button id="markerTestBtn">Marker midt i kartet</button>
+// --- kart ---
+const map = L.map('map');
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom:19, attribution:'&copy; OpenStreetMap-bidragsytere'
+}).addTo(map);
 
-    <span id="status" class="small">Laster…</span>
-  </div>
-  <div id="map"></div>
+const warpPane = map.createPane('warp'); warpPane.classList.add('leaflet-warp-pane');
+const gpsPane  = map.createPane('gps');  gpsPane.classList.add('leaflet-gps-pane');
+const userLayer = L.layerGroup().addTo(map);
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin="anonymous"></script>
-  <script>
-  (function(){
-    const statusEl = document.getElementById('status');
-    const setStatus = (msg)=> statusEl.innerHTML = msg;
+// --- warp-bilde ---
+let canvas=null, ctx=null, img=null, cornersLL=null;
+const imgToggle = document.getElementById('imgToggle');
 
-    // VIS KONKRETE FEIL (ikke bare "Script error")
-    window.addEventListener('error', e => {
-      setStatus('JS-feil: ' + (e.message||'ukjent') + (e.filename?(' @ '+e.filename+':'+e.lineno+':'+e.colno):''));
-    });
-    window.addEventListener('unhandledrejection', e => {
-      const r = e.reason||{};
-      setStatus('Promise-feil: ' + (r.message||r));
-    });
+function ensureCanvas(){
+  if (canvas) return;
+  canvas = L.DomUtil.create('canvas','',warpPane);
+  canvas.style.position='absolute';
+  ctx = canvas.getContext('2d');
+}
+function setCanvasSize(){
+  const sz = map.getSize();
+  canvas.width = sz.x; canvas.height = sz.y;
+  const pos = map.containerPointToLayerPoint([0,0]);
+  L.DomUtil.setPosition(canvas, pos);
+}
+function llToCanvas(ll){
+  const p = map.latLngToLayerPoint(ll);
+  const tl = map.containerPointToLayerPoint([0,0]);
+  return { x: p.x - tl.x, y: p.y - tl.y };
+}
+function setTriTransform(ctx, s0,s1,s2, d0,d1,d2){
+  const a11=s1.x-s0.x, a12=s2.x-s0.x, a21=s1.y-s0.y, a22=s2.y-s0.y;
+  const det=a11*a22-a12*a21; if(Math.abs(det)<1e-12){ctx.setTransform(1,0,0,1,0,0);return;}
+  const inv11=a22/det, inv12=-a12/det, inv13=-(inv11*s0.x+inv12*s0.y);
+  const inv21=-a21/det, inv22=a11/det, inv23=-(inv21*s0.x+inv22*s0.y);
+  const b11=d1.x-d0.x, b12=d2.x-d0.x, b13=d0.x;
+  const b21=d1.y-d0.y, b22=d2.y-d0.y, b23=d0.y;
+  const A=b11*inv11+b12*inv21, B=b21*inv11+b22*inv21;
+  const C=b11*inv12+b12*inv22, D=b21*inv12+b22*inv22;
+  const E=b11*inv13+b12*inv23+b13, F=b21*inv13+b22*inv23+b23;
+  ctx.setTransform(A,B,C,D,E,F);
+}
+const lerp=(a,b,t)=> a+(b-a)*t;
+const lerpPt=(p,q,t)=> ({x: lerp(p.x,q.x,t), y: lerp(p.y,q.y,t)});
 
-    // ---- Konfig ----
-    const IMAGE_URL = "Turkart.png?v=" + Date.now();
-    // Låste hjørner (NW, NE, SE, SW) – dine verdier
-    const CORNERS = [
-      [59.54593535667747, 10.765142440795898],
-      [59.539561484456776, 11.201162338256838],
-      [59.380786150970934, 11.190948486328127],
-      [59.387167906588274, 10.756945610046387]
-    ];
-    const GRID_COLS = 24, GRID_ROWS = 24;
+function renderWarp(){
+  if (!img || !img.complete || !img.naturalWidth || !imgToggle.checked) {
+    if (canvas) ctx?.clearRect(0,0,canvas.width,canvas.height);
+    return;
+  }
+  ensureCanvas(); setCanvasSize();
+  const imgW = img.naturalWidth, imgH = img.naturalHeight;
+  const [pNW,pNE,pSE,pSW] = cornersLL.map(ll=>llToCanvas(ll));
+  const op = parseFloat(document.getElementById('opacity').value || "0.95");
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.globalAlpha = op;
 
-    // ---- Kart ----
-    const map = L.map('map');
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
-      maxZoom:19, attribution:'&copy; OpenStreetMap-bidragsytere'
-    }).addTo(map);
+  for(let j=0;j<GRID_ROWS;j++){
+    const v0=j/GRID_ROWS, v1=(j+1)/GRID_ROWS;
+    const L0=lerpPt(pNW,pSW,v0), R0=lerpPt(pNE,pSE,v0);
+    const L1=lerpPt(pNW,pSW,v1), R1=lerpPt(pNE,pSE,v1);
+    for(let i=0;i<GRID_COLS;i++){
+      const u0=i/GRID_COLS, u1=(i+1)/GRID_COLS;
+      const Q00=lerpPt(L0,R0,u0), Q10=lerpPt(L0,R0,u1);
+      const Q01=lerpPt(L1,R1,u0), Q11=lerpPt(L1,R1,u1);
+      const S00={x:u0*imgW,y:v0*imgH}, S10={x:u1*imgW,y:v0*imgH};
+      const S01={x:u0*imgW,y:v1*imgH}, S11={x:u1*imgW,y:v1*imgH};
 
-    const warpPane = map.createPane('warp'); warpPane.classList.add('leaflet-warp-pane');
-    const gpsPane  = map.createPane('gps');  gpsPane.classList.add('leaflet-gps-pane');
-    const userLayer = L.layerGroup().addTo(map);
+      ctx.save();
+      ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q10.x,Q10.y); ctx.lineTo(Q11.x,Q11.y); ctx.closePath(); ctx.clip();
+      setTriTransform(ctx, S00,S10,S11, Q00,Q10,Q11); ctx.drawImage(img,0,0); ctx.restore();
 
-    // ---- Bilde (warp) ----
-    let canvas=null, ctx=null, img=null, cornersLL=null;
-    const imgToggle = document.getElementById('imgToggle');
-
-    function ensureCanvas(){
-      if (canvas) return;
-      canvas = L.DomUtil.create('canvas','',warpPane);
-      canvas.style.position='absolute';
-      ctx = canvas.getContext('2d');
+      ctx.save();
+      ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q11.x,Q11.y); ctx.lineTo(Q01.x,Q01.y); ctx.closePath(); ctx.clip();
+      setTriTransform(ctx, S00,S11,S01, Q00,Q11,Q01); ctx.drawImage(img,0,0); ctx.restore();
     }
-    function setCanvasSize(){
-      const sz = map.getSize();
-      canvas.width = sz.x; canvas.height = sz.y;
-      const pos = map.containerPointToLayerPoint([0,0]);
-      L.DomUtil.setPosition(canvas, pos);
-    }
-    function llToCanvas(ll){
-      const p = map.latLngToLayerPoint(ll);
-      const tl = map.containerPointToLayerPoint([0,0]);
-      return { x: p.x - tl.x, y: p.y - tl.y };
-    }
-    function setTriTransform(ctx, s0,s1,s2, d0,d1,d2){
-      const a11=s1.x-s0.x, a12=s2.x-s0.x, a21=s1.y-s0.y, a22=s2.y-s0.y;
-      const det=a11*a22-a12*a21; if(Math.abs(det)<1e-12){ctx.setTransform(1,0,0,1,0,0);return;}
-      const inv11=a22/det, inv12=-a12/det, inv13=-(inv11*s0.x+inv12*s0.y);
-      const inv21=-a21/det, inv22=a11/det, inv23=-(inv21*s0.x+inv22*s0.y);
-      const b11=d1.x-d0.x, b12=d2.x-d0.x, b13=d0.x;
-      const b21=d1.y-d0.y, b22=d2.y-d0.y, b23=d0.y;
-      const A=b11*inv11+b12*inv21, B=b21*inv11+b22*inv21;
-      const C=b11*inv12+b12*inv22, D=b21*inv12+b22*inv22;
-      const E=b11*inv13+b12*inv23+b13, F=b21*inv13+b22*inv23+b23;
-      ctx.setTransform(A,B,C,D,E,F);
-    }
-    function renderWarp(){
-      if (!img || !img.complete || !img.naturalWidth || !imgToggle.checked) { if (canvas) ctx?.clearRect(0,0,canvas.width,canvas.height); return; }
-      ensureCanvas();
-      setCanvasSize();
-      const imgW = img.naturalWidth, imgH = img.naturalHeight;
-      const [pNW,pNE,pSE,pSW] = cornersLL.map(ll=>llToCanvas(ll));
-      const op = parseFloat(document.getElementById('opacity').value || "0.95");
-      ctx.clearRect(0,0,canvas.width,canvas.height);
-      ctx.globalAlpha = op;
+  }
+}
 
-      const lerp=(a,b,t)=> a+(b-a)*t;
-      const lerpPt=(p,q,t)=> ({x: lerp(p.x,q.x,t), y: lerp(p.y,q.y,t)});
-
-      for(let j=0;j<GRID_ROWS;j++){
-        const v0=j/GRID_ROWS, v1=(j+1)/GRID_ROWS;
-        const L0=lerpPt(pNW,pSW,v0), R0=lerpPt(pNE,pSE,v0);
-        const L1=lerpPt(pNW,pSW,v1), R1=lerpPt(pNE,pSE,v1);
-        for(let i=0;i<GRID_COLS;i++){
-          const u0=i/GRID_COLS, u1=(i+1)/GRID_COLS;
-          const Q00=lerpPt(L0,R0,u0), Q10=lerpPt(L0,R0,u1);
-          const Q01=lerpPt(L1,R1,u0), Q11=lerpPt(L1,R1,u1);
-          const S00={x:u0*imgW,y:v0*imgH}, S10={x:u1*imgW,y:v0*imgH};
-          const S01={x:u0*imgW,y:v1*imgH}, S11={x:u1*imgW,y:v1*imgH};
-
-          ctx.save();
-          ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q10.x,Q10.y); ctx.lineTo(Q11.x,Q11.y); ctx.closePath(); ctx.clip();
-          setTriTransform(ctx, S00,S10,S11, Q00,Q10,Q11); ctx.drawImage(img,0,0); ctx.restore();
-
-          ctx.save();
-          ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q11.x,Q11.y); ctx.lineTo(Q01.x,Q01.y); ctx.closePath(); ctx.clip();
-          setTriTransform(ctx, S00,S11,S01, Q00,Q11,Q01); ctx.drawImage(img,0,0); ctx.restore();
-        }
-      }
-    }
-
-    // Last bilde
-    (function loadImage(){
-      try{
-        img = new Image();
-        img.crossOrigin = "anonymous";
-        img.onload = ()=>{ cornersLL = CORNERS.map(([lat,lng])=>L.latLng(lat,lng));
-                           map.fitBounds(L.latLngBounds(cornersLL), {padding:[10,10]});
-                           renderWarp(); setStatus('Klar'); };
-        img.onerror = ()=> setStatus("Klarte ikke å laste Turkart.png");
-        img.src = IMAGE_URL;
-      }catch(err){ setStatus('Init-feil: '+err.message); }
-    })();
-
-    // Re-render ved kartendringer
-    map.on('move zoom resize', ()=> renderWarp());
-    document.getElementById('opacity').addEventListener('input', ()=> renderWarp());
-    document.getElementById('imgToggle').addEventListener('change', ()=> renderWarp());
-    document.getElementById('fitBtn').addEventListener('click', ()=> {
-      if (cornersLL) map.fitBounds(L.latLngBounds(cornersLL), {padding:[10,10]});
-    });
-
-    // ---- Bruker-markør ----
-    const dropIcon = L.divIcon({
-      className: 'gps-drop',
-      html: `<svg width="28" height="28" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg">
-               <path d="M14 1 C8 1 4 5.5 4 10.5 c0 6.5 8 13 10 16 2-3 10-9.5 10-16 C24 5.5 20 1 14 1z" fill="#2563eb" stroke="white" stroke-width="2"/>
-               <circle cx="14" cy="11" r="4" fill="white"/>
-             </svg>`,
-      iconSize:[28,28], iconAnchor:[14,26]
-    });
-    let userMarker=null, userDot=null, accuracyCircle=null;
-
-    function showUser(ll, acc=0){
-      if (!userMarker) userMarker = L.marker(ll, {icon: dropIcon, zIndexOffset: 10000});
-      userMarker.setLatLng(ll).addTo(userLayer);
-      if (!userDot) userDot = L.circleMarker(ll, {radius:8, weight:2, color:'#0b5cff', fill:true, fillOpacity:1});
-      userDot.setLatLng(ll).addTo(userLayer);
-      if (!accuracyCircle) accuracyCircle = L.circle(ll, {pane:'gps', radius: acc||0, color:'#2563eb', weight:1, fillOpacity:0.05});
-      accuracyCircle.setLatLng(ll); if (acc!=null) accuracyCircle.setRadius(acc);
-      accuracyCircle.addTo(map);
-      // Marker-laget øverst:
-      userLayer.eachLayer(l => l.bringToFront && l.bringToFront());
-    }
-
-    // LIVE sporing
-    let watchId=null;
-    function startWatch(mode='fast'){
-      if (!navigator.geolocation){ setStatus("Geolocation ikke støttet"); return; }
-      if (watchId!=null){ navigator.geolocation.clearWatch(watchId); watchId=null; }
-      const opts = (mode==='precise')
-        ? { enableHighAccuracy:true,  timeout:30000, maximumAge:0 }
-        : { enableHighAccuracy:false, timeout:20000, maximumAge:60000 };
-      setStatus(`Sporer (${mode==='precise'?'presis':'rask'})…`);
-      watchId = navigator.geolocation.watchPosition(
-        pos => {
-          const ll = [pos.coords.latitude, pos.coords.longitude];
-          showUser(ll, pos.coords.accuracy);
-          if (document.getElementById('followToggle').checked) map.setView(ll);
-          setStatus(`Sporer: ${ll[0].toFixed(6)}, ${ll[1].toFixed(6)} (±${Math.round(pos.coords.accuracy)} m)`);
-        },
-        err => {
-          const code = ({1:'PERMISSION_DENIED',2:'POSITION_UNAVAILABLE',3:'TIMEOUT'})[err.code]||'ERROR';
-          setStatus(`Sporing feilet: ${code} – ${err.message}`);
-        },
-        opts
-      );
-    }
-    function stopWatch(){
-      if (watchId!=null){ navigator.geolocation.clearWatch(watchId); watchId=null; }
-      setStatus("Sporing stoppet");
-    }
-
-    // Knapper
-    document.getElementById('startFast').onclick    = ()=> startWatch('fast');
-    document.getElementById('startPrecise').onclick = ()=> startWatch('precise');
-    document.getElementById('stopWatch').onclick    = ()=> stopWatch();
-    document.getElementById('testBtn').onclick = ()=>{
-      const ll = L.latLng(59.464434, 10.779567);
-      showUser(ll, 0);
-      map.setView(ll);
-      setStatus(`Test-dråpe: ${ll.lat.toFixed(6)}, ${ll.lng.toFixed(6)}`);
+// last bildet (same-origin)
+(function loadImage(){
+  try{
+    img = new Image();
+    img.onload = ()=>{
+      cornersLL = CORNERS.map(([lat,lng])=>L.latLng(lat,lng));
+      map.fitBounds(L.latLngBounds(cornersLL), {padding:[10,10]});
+      renderWarp(); setStatus('Klar');
     };
-    document.getElementById('markerTestBtn').onclick = ()=>{
-      const c = map.getCenter();
-      showUser(c, 0);
-      setStatus(`Marker midt i kartet: ${c.lat.toFixed(6)}, ${c.lng.toFixed(6)}`);
-    };
+    img.onerror = ()=> setStatus("Klarte ikke å laste Turkart.png");
+    img.src = IMAGE_URL;
+  }catch(err){ setStatus('Init-feil: '+err.message); }
+})();
+map.on('move zoom resize', renderWarp);
+document.getElementById('opacity').addEventListener('input', renderWarp);
+document.getElementById('imgToggle').addEventListener('change', renderWarp);
+document.getElementById('fitBtn').addEventListener('click', ()=> {
+  if (cornersLL) map.fitBounds(L.latLngBounds(cornersLL), {padding:[10,10]});
+});
 
-    // Start automatisk: rask sporing
-    startWatch('fast');
-  })();
-  </script>
-</body>
-</html>
+// --- bruker-markør ---
+const dropIcon = L.divIcon({
+  className: 'gps-drop',
+  html: `<svg width="28" height="28" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg">
+           <path d="M14 1 C8 1 4 5.5 4 10.5 c0 6.5 8 13 10 16 2-3 10-9.5 10-16 C24 5.5 20 1 14 1z" fill="#2563eb" stroke="white" stroke-width="2"/>
+           <circle cx="14" cy="11" r="4" fill="white"/>
+         </svg>`,
+  iconSize:[28,28], iconAnchor:[14,26]
+});
+let userMarker=null, userDot=null, accuracyCircle=null;
+function showUser(ll, acc=0){
+  if (!userMarker) userMarker = L.marker(ll, {icon: dropIcon, zIndexOffset: 10000});
+  userMarker.setLatLng(ll).addTo(userLayer);
+  if (!userDot) userDot = L.circleMarker(ll, {radius:8, weight:2, color:'#0b5cff', fill:true, fillOpacity:1});
+  userDot.setLatLng(ll).addTo(userLayer);
+  if (!accuracyCircle) accuracyCircle = L.circle(ll, {pane:'gps', radius: acc||0, color:'#2563eb', weight:1, fillOpacity:0.05});
+  accuracyCircle.setLatLng(ll); if (acc!=null) accuracyCircle.setRadius(acc); accuracyCircle.addTo(map);
+  userLayer.eachLayer(l => l.bringToFront && l.bringToFront());
+}
+
+// LIVE sporing
+let watchId=null;
+function startWatch(mode='fast'){
+  if (!navigator.geolocation){ setStatus("Geolocation ikke støttet"); return; }
+  if (watchId!=null){ navigator.geolocation.clearWatch(watchId); watchId=null; }
+  const opts = (mode==='precise')
+    ? { enableHighAccuracy:true,  timeout:30000, maximumAge:0 }
+    : { enableHighAccuracy:false, timeout:20000, maximumAge:60000 };
+  setStatus(`Sporer (${mode==='precise'?'presis':'rask'})…`);
+  watchId = navigator.geolocation.watchPosition(
+    pos => {
+      const ll = [pos.coords.latitude, pos.coords.longitude];
+      showUser(ll, pos.coords.accuracy);
+      if (document.getElementById('followToggle').checked) map.setView(ll);
+      setStatus(`Sporer: ${ll[0].toFixed(6)}, ${ll[1].toFixed(6)} (±${Math.round(pos.coords.accuracy)} m)`);
+    },
+    err => {
+      const code = ({1:'PERMISSION_DENIED',2:'POSITION_UNAVAILABLE',3:'TIMEOUT'})[err.code]||'ERROR';
+      setStatus(`Sporing feilet: ${code} – ${err.message}`);
+    },
+    opts
+  );
+}
+function stopWatch(){
+  if (watchId!=null){ navigator.geolocation.clearWatch(watchId); watchId=null; }
+  setStatus("Sporing stoppet");
+}
+
+// knapper
+document.getElementById('startFast').onclick    = ()=> startWatch('fast');
+document.getElementById('startPrecise').onclick = ()=> startWatch('precise');
+document.getElementById('stopWatch').onclick    = ()=> stopWatch();
+document.getElementById('testBtn').onclick = ()=>{
+  const ll = L.latLng(59.464434, 10.779567);
+  showUser(ll, 0); map.setView(ll);
+  setStatus(`Test-dråpe: ${ll.lat.toFixed(6)}, ${ll.lng.toFixed(6)}`);
+};
+document.getElementById('markerTestBtn').onclick = ()=>{
+  const c = map.getCenter(); showUser(c,0);
+  setStatus(`Marker midt: ${c.lat.toFixed(6)}, ${c.lng.toFixed(6)}`);
+};
+
+// start automatisk: rask sporing
+startWatch('fast');
