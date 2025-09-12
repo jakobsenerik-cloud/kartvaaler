@@ -3,57 +3,68 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>nykart – dra hjørner for å justere</title>
+  <title>nykart – fri forvrengning (dra alle fire hjørner)</title>
+
+  <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Leaflet.DistortableImage (fri forvrengning/perspektiv) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.distortableimage@0.12.2/dist/leaflet.distortableimage.css" />
+  <script src="https://unpkg.com/leaflet.distortableimage@0.12.2/dist/leaflet.distortableimage.js"></script>
+
   <style>
     html, body { margin:0; height:100%; }
     #map { height:100vh; width:100%; }
+
     .panel {
       position:absolute; z-index:1000; top:10px; left:10px;
       background:rgba(255,255,255,.97); padding:10px 12px; border-radius:10px;
-      box-shadow:0 8px 24px rgba(0,0,0,.12); font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      display:grid; gap:8px; grid-template-columns:1fr; max-width:620px;
+      box-shadow:0 8px 24px rgba(0,0,0,.14);
+      font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      display:grid; gap:8px; max-width:720px;
     }
     .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
     button { padding:6px 10px; border:1px solid #ccc; border-radius:8px; background:#fff; cursor:pointer; }
-    .mono { font:12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space:break-spaces; }
     .small { font-size:12px; color:#444; }
-    .badge { background:#eef; padding:2px 6px; border-radius:6px; }
+    .mono { font:12px/1.35 ui-monospace,Consolas,Menlo,monospace; white-space:break-spaces; }
+    .kbd { padding:1px 6px; border:1px solid #ddd; border-radius:6px; background:#f8f8f9; font:12px ui-monospace; }
   </style>
 </head>
 <body>
   <div class="panel">
     <div class="row">
-      <strong>Dra hjørnene (SW/NW/NE/SE) for å plassere bildet</strong>
-      <span class="small">Bilde: <span class="badge">Turkart.png</span></span>
+      <strong>Dra alle fire hjørnene (fri forvrengning)</strong>
+      <span class="small">Fil: <b>Turkart.png</b>. Hjørne-håndtak vises når du klikker på bildet.</span>
     </div>
     <div class="row">
       <button id="fitBtn">Vis hele bildet</button>
-      <button id="resetBtn">Tilbakestill (fra world-fil)</button>
-      <button id="copyBtn">Kopier SW/NE</button>
-      <label class="small"><input type="checkbox" id="lockAspect" checked /> Lås sideforhold</label>
-      <label class="small"><input type="checkbox" id="showGrid" /> Vis 1 km-rutenett (UTM32, skjematisk)</label>
+      <button id="resetBtn">Tilbakestill fra world-fil</button>
+      <button id="copyBtn">Kopier hjørner (WGS84)</button>
     </div>
+    <div class="small">Tips: bruk mus og zoom inn for presis plassering. Tast <span class="kbd">Esc</span> for å avslutte aktiv redigering.</div>
     <div id="status" class="small">Laster…</div>
-    <div id="boundsOut" class="mono small"></div>
+    <div id="out" class="mono small"></div>
   </div>
 
   <div id="map"></div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
     // ---- Konfig ----
     const IMAGE_URL = "Turkart.png";
-    const WORLD_CANDIDATES = ["Turkart.pgw", "Turkart.tfw", "Turkart.jgw"];
+    const WORLD_CANDIDATES = ["Turkart.pgw","Turkart.tfw","Turkart.jgw"]; // valgfritt; brukes til startplassering
 
-    // ---- UTM32 -> WGS84 (ETRS89) ----
-    function utmToLatLon(E, N, zone=32, northern=true) {
+    // ---- Hjelpere ----
+    const $ = id => document.getElementById(id);
+    const status = msg => $('status').textContent = msg;
+
+    // UTM32 -> WGS84 (ETRS89) for world-init
+    function utmToLatLon(E, N, zone=32, northern=true){
       const a=6378137.0, f=1/298.257222101, b=a*(1-f);
       const e2=(a*a-b*b)/(a*a), ep2=(a*a-b*b)/(b*b), k0=0.9996;
       const lon0=((zone-1)*6-180+3)*Math.PI/180;
       const x=E-500000.0, y=northern?N:N-10000000.0;
-      const M=y/k0;
-      const mu=M/(a*(1-e2/4-3*e2*e2/64-5*e2**3/256));
+      const M=y/k0, mu=M/(a*(1-e2/4-3*e2**2/64-5*e2**3/256));
       const e1=(1-Math.sqrt(1-e2))/(1+Math.sqrt(1-e2));
       const J1=3*e1/2-27*e1**3/32, J2=21*e1**2/16-55*e1**4/32, J3=151*e1**3/96, J4=1097*e1**4/512;
       const fp=mu+J1*Math.sin(2*mu)+J2*Math.sin(4*mu)+J3*Math.sin(6*mu)+J4*Math.sin(8*mu);
@@ -65,193 +76,121 @@
       return [lat*180/Math.PI, lon*180/Math.PI];
     }
 
-    // ---- Hjelpere ----
-    const $ = (id)=>document.getElementById(id);
-    const status = (msg)=> $('status').textContent = msg;
-
-    // Global state
-    let map, overlay;
-    let imgW=0, imgH=0, aspect=1;
-    let A=0,E=0,C=0,F=0; // world
-    let markers = {};   // SW, NW, NE, SE
-    let dragging = null;
-
-    // Lag kart
-    map = L.map('map');
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap-bidragsytere'
-    }).addTo(map);
-
-    // Marker-stil
-    function mkIcon(color='#2563eb'){
-      return L.divIcon({
-        className: 'corner-marker',
-        html: `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.3)"></div>`,
-        iconSize: [18,18], iconAnchor:[9,9]
-      });
-    }
-
-    function updateOverlayFromMarkers(lockAspect=true){
-      // Hent lat/lng fra hjørnene
-      const sw = markers.SW.getLatLng();
-      const nw = markers.NW.getLatLng();
-      const ne = markers.NE.getLatLng();
-      const se = markers.SE.getLatLng();
-
-      // Regn rektangulære bounds: min/max
-      const south = Math.min(sw.lat, se.lat);
-      const north = Math.max(nw.lat, ne.lat);
-      const west  = Math.min(sw.lng, nw.lng);
-      const east  = Math.max(se.lng, ne.lng);
-
-      // Lås sideforhold (bruk høyde som styrende)
-      let southLat = south, northLat = north, westLng = west, eastLng = east;
-      if (lockAspect) {
-        const heightDeg = north - south;
-        const widthNeeded = heightDeg * aspect;   // tilnærming i grader (greit lokalt)
-        const centerLng = (west + east)/2;
-        westLng = centerLng - widthNeeded/2;
-        eastLng = centerLng + widthNeeded/2;
-      }
-
-      const b = L.latLngBounds([southLat, westLng], [northLat, eastLng]);
-      overlay.setBounds(b);
-
-      // Oppdater markørene til de fire ekte hjørnene av rektangelet
-      const bb = overlay.getBounds();
-      markers.SW.setLatLng(bb.getSouthWest());
-      markers.NW.setLatLng(bb.getNorthWest());
-      markers.NE.setLatLng(bb.getNorthEast());
-      markers.SE.setLatLng(bb.getSouthEast());
-
-      // Tekst ut
-      const swLL = bb.getSouthWest(), neLL = bb.getNorthEast();
-      $('boundsOut').textContent =
-        `SW (lat,lon): ${swLL.lat.toFixed(8)}, ${swLL.lng.toFixed(8)}\n` +
-        `NE (lat,lon): ${neLL.lat.toFixed(8)}, ${neLL.lng.toFixed(8)}`;
-    }
-
-    function addCornerMarkers(bounds){
-      // Fjern gamle
-      Object.values(markers).forEach(m => map.removeLayer(m));
-      markers = {
-        SW: L.marker(bounds.getSouthWest(), { draggable:true, icon:mkIcon('#0ea5e9'), title:'SW' }).addTo(map),
-        NW: L.marker(bounds.getNorthWest(), { draggable:true, icon:mkIcon('#22c55e'), title:'NW' }).addTo(map),
-        NE: L.marker(bounds.getNorthEast(), { draggable:true, icon:mkIcon('#f97316'), title:'NE' }).addTo(map),
-        SE: L.marker(bounds.getSouthEast(), { draggable:true, icon:mkIcon('#ef4444'), title:'SE' }).addTo(map),
-      };
-      Object.values(markers).forEach(m => {
-        m.on('dragstart', ()=> dragging = m);
-        m.on('drag', ()=> updateOverlayFromMarkers($('lockAspect').checked));
-        m.on('dragend', ()=> { dragging = null; updateOverlayFromMarkers($('lockAspect').checked); });
-      });
-    }
-
     async function loadWorld(){
-      for (const name of WORLD_CANDIDATES) {
-        try {
-          const res = await fetch(name, { cache:'no-store' });
-          if (res.ok) {
-            const txt = await res.text();
-            const Ls = txt.trim().split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-            if (Ls.length >= 6) {
-              A = parseFloat(Ls[0]); // m/px X
-              const D = parseFloat(Ls[1]); // rot
-              const B = parseFloat(Ls[2]); // rot
-              E = parseFloat(Ls[3]); // m/px Y (oftest negativ)
-              C = parseFloat(Ls[4]); // Ø (senter av øverste-venstre piksel)
-              F = parseFloat(Ls[5]); // N (senter av øverste-venstre piksel)
-              return name;
+      for(const name of WORLD_CANDIDATES){
+        try{
+          const r = await fetch(name, {cache:'no-store'});
+          if(r.ok){
+            const t = await r.text();
+            const L = t.trim().split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+            if(L.length>=6){
+              const A=+L[0], D=+L[1], B=+L[2], E=+L[3], C=+L[4], F=+L[5];
+              // rektangel-corners fra world: NW, NE, SE, SW
+              const west  = C - A/2.0;
+              const north = F - E/2.0;     // E<0
+              const img = await loadImage(IMAGE_URL);
+              const east  = west  + A*img.naturalWidth;
+              const south = north + E*img.naturalHeight; // E<0 -> south < north
+              const [nwLat, nwLng] = utmToLatLon(west, north);
+              const [neLat, neLng] = utmToLatLon(east, north);
+              const [seLat, seLng] = utmToLatLon(east, south);
+              const [swLat, swLng] = utmToLatLon(west, south);
+              return { ok:true, corners:[[nwLat,nwLng],[neLat,neLng],[seLat,seLng],[swLat,swLng]], name };
             }
           }
-        } catch {}
+        }catch{}
       }
-      throw new Error("Fant ingen world-fil (Turkart.pgw/.tfw/.jgw).");
+      return { ok:false, msg:"Fant ingen world-fil – starter midlertidig i Norge." };
     }
 
-    function boundsFromWorld(){
-      // world + pikselstørrelse → UTM-bounds → WGS84
-      const west  = C - A/2.0;
-      const north = F - E/2.0; // E<0
-      const east  = west + A * imgW;
-      const south = north + E * imgH; // E<0 → south < north
-
-      const [swLat, swLon] = utmToLatLon(west, south);
-      const [neLat, neLon] = utmToLatLon(east, north);
-      return L.latLngBounds([swLat, swLon], [neLat, neLon]);
+    function toLatLngs(corners){
+      // [ [lat,lng], ... ] -> [L.latLng(), ...]
+      return corners.map(([lat,lng]) => L.latLng(lat,lng));
     }
 
-    function fit(){ map.fitBounds(overlay.getBounds(), { padding:[10,10] }); }
+    function getCornersWGS(overlay){
+      // rekkefølge: NW, NE, SE, SW (Leaflet.DistortableImage)
+      const c = overlay.getCorners(); // returns array of LatLngs
+      return {
+        NW: [c[0].lat, c[0].lng],
+        NE: [c[1].lat, c[1].lng],
+        SE: [c[2].lat, c[2].lng],
+        SW: [c[3].lat, c[3].lng],
+      };
+    }
 
-    async function init(){
-      // 1) Last bilde (for å få størrelse og sideforhold)
-      const tmp = new Image();
-      tmp.src = IMAGE_URL + "?v=" + Date.now();
-      await new Promise((res, rej)=>{ tmp.onload=()=>res(); tmp.onerror=()=>rej(new Error("Fikk ikke lastet " + IMAGE_URL)); });
-      imgW = tmp.naturalWidth; imgH = tmp.naturalHeight; aspect = imgW / imgH;
+    function cornersText(obj){
+      return `NW: [${obj.NW[0]}, ${obj.NW[1]}]
+NE: [${obj.NE[0]}, ${obj.NE[1]}]
+SE: [${obj.SE[0]}, ${obj.SE[1]}]
+SW: [${obj.SW[0]}, ${obj.SW[1]}]`;
+    }
 
-      // 2) Lag overlay med midlertidige bounds (byttes straks)
-      overlay = L.imageOverlay(IMAGE_URL + "?v=" + Date.now(), [[59.5,10.7],[59.55,10.9]], { opacity: 0.95 }).addTo(map);
+    function loadImage(url){
+      return new Promise((res, rej)=>{
+        const im = new Image();
+        im.onload = ()=> res(im);
+        im.onerror = ()=> rej(new Error("Kunne ikke laste " + url));
+        im.src = url + "?v=" + Date.now();
+      });
+    }
 
-      // 3) Hent world og sett start-bounds
-      let worldName = "—";
-      try {
-        worldName = await loadWorld();
-        const b = boundsFromWorld();
-        overlay.setBounds(b);
-        map.fitBounds(b, { padding:[10,10] });
-        status(`Startet med georeferanse fra ${worldName}. Dra hjørnene for å finjustere.`);
-      } catch(e) {
-        map.setView([59.5, 10.8], 11);
-        status("Fant ingen world-fil – la bildet i et standardområde. Dra hjørnene for å plassere.");
+    let map, overlay;
+
+    (async function init(){
+      // 1) Kart
+      map = L.map('map');
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'&copy; OpenStreetMap-bidragsytere'}).addTo(map);
+
+      // 2) Startcorners: world hvis mulig, ellers et grovt utsnitt
+      let startCorners;
+      const w = await loadWorld();
+      if (w.ok){
+        startCorners = toLatLngs(w.corners);
+        status(`Startet med georeferanse fra ${w.name}. Klikk bildet for å vise håndtak, og dra hjørnene.`);
+      } else {
+        startCorners = [
+          L.latLng(59.55, 10.70),
+          L.latLng(59.55, 10.90),
+          L.latLng(59.45, 10.90),
+          L.latLng(59.45, 10.70)
+        ];
+        status(w.msg + " Dra hjørnene til riktig posisjon.");
       }
 
-      // 4) Hjørnemarkører
-      addCornerMarkers(overlay.getBounds());
-      updateOverlayFromMarkers(true);
+      // 3) Fri forvrengning – legg til bildet
+      overlay = new L.DistortableImageOverlay(IMAGE_URL, {
+        corners: startCorners,         // rekkefølge: NW, NE, SE, SW
+        editable: true,
+        mode: 'distort',               // fri forvrengning
+        suppressToolbar: false,        // vis liten verktøylinje
+        actions: ['lock', 'unlock', 'rotate', 'scale', 'distort', 'opacity', 'remove']
+      }).addTo(map);
 
-      // UI
-      $('fitBtn').onclick = fit;
-      $('resetBtn').onclick = ()=>{
-        const b = boundsFromWorld();
-        overlay.setBounds(b);
-        addCornerMarkers(b);
-        fit();
-        updateOverlayFromMarkers(true);
-      };
-      $('copyBtn').onclick = ()=>{
-        const bb = overlay.getBounds();
-        const sw = bb.getSouthWest(), ne = bb.getNorthEast();
-        const txt = `SW: [${sw.lat}, ${sw.lng}], NE: [${ne.lat}, ${ne.lng}]`;
-        navigator.clipboard.writeText(txt).then(()=> status("Kopiert SW/NE til utklippstavla")).catch(()=>{});
-        $('boundsOut').textContent = `SW (lat,lon): ${sw.lat}, ${sw.lng}\nNE (lat,lon): ${ne.lat}, ${ne.lng}`;
-      };
-      $('lockAspect').onchange = ()=> updateOverlayFromMarkers($('lockAspect').checked);
+      overlay.once('load', () => map.fitBounds(L.latLngBounds(startCorners)));
 
-      // Valgfri rutenett (skjematisk 1 km)
-      let gridLayer = null;
-      $('showGrid').onchange = (e)=>{
-        if (e.target.checked) {
-          gridLayer = L.gridLayer({
-            pane: 'overlayPane',
-            updateWhenZoom: false,
-            updateWhenIdle: true
-          });
-          gridLayer.createTile = function(coords){
-            const tile = document.createElement('canvas');
-            const size = this.getTileSize(); tile.width=size.x; tile.height=size.y;
-            const ctx = tile.getContext('2d'); ctx.strokeStyle='rgba(0,0,0,.15)'; ctx.lineWidth=1;
-            // Tegn en enkel tile-ramme (gir følelse av rutenett)
-            ctx.strokeRect(0.5,0.5,size.x-1,size.y-1);
-            return tile;
-          };
-          gridLayer.addTo(map);
-        } else if (gridLayer) { map.removeLayer(gridLayer); gridLayer=null; }
-      };
-    }
+      // 4) UI-knapper
+      $('fitBtn').onclick = () => map.fitBounds(overlay.getBounds(), {padding:[10,10]});
 
-    init().catch(err=>{ status(err.message); console.error(err); });
+      $('resetBtn').onclick = async () => {
+        const w2 = await loadWorld();
+        if (w2.ok){
+          overlay.setCorners(toLatLngs(w2.corners));
+          map.fitBounds(L.latLngBounds(toLatLngs(w2.corners)), {padding:[10,10]});
+          status(`Tilbakestilt fra ${w2.name}.`);
+        } else {
+          status("Fant ingen world-fil å tilbakestille fra.");
+        }
+      };
+
+      $('copyBtn').onclick = () => {
+        const c = getCornersWGS(overlay);
+        const txt = cornersText(c);
+        $('out').textContent = txt;
+        navigator.clipboard?.writeText(txt).then(()=>{ status("Hjørner kopiert til utklippstavla."); }).catch(()=>{});
+      };
+
+    })().catch(err => { status(err.message); console.error(err); });
   </script>
 </body>
 </html>
