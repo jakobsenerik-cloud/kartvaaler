@@ -3,26 +3,225 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>nykart – ny PNG (opaque) + GPS</title>
+  <title>nykart – kalibrer georeferanse (klipp bort plakat-kant)</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <style>html,body{margin:0;height:100%}#map{height:100vh;width:100%}.panel{position:absolute;z-index:1000;top:10px;left:10px;background:rgba(255,255,255,.95);padding:8px 10px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);font:14px/1.4 system-ui}</style>
+  <style>
+    html, body { margin:0; height:100%; }
+    #map { height:100vh; width:100%; }
+    .panel {
+      position:absolute; z-index:1000; top:10px; left:10px;
+      background:rgba(255,255,255,.97); padding:10px 12px; border-radius:10px;
+      box-shadow:0 8px 24px rgba(0,0,0,.12); font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      display:grid; gap:8px; grid-template-columns: 1fr; max-width: 520px;
+    }
+    .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    .row label { display:flex; align-items:center; gap:6px; }
+    input[type="number"] { width: 82px; padding:4px 6px; }
+    button { padding:6px 10px; border:1px solid #ccc; border-radius:8px; background:#fff; cursor:pointer; }
+    code { background:#f6f6f7; padding:2px 6px; border-radius:6px; }
+    .mono { font:12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space:break-spaces; }
+    .small { font-size:12px; color:#444; }
+  </style>
 </head>
 <body>
-  <div class="panel"><button id="fitBtn">Vis kartområdet</button> <small id="status">Laster…</small></div>
+  <div class="panel">
+    <div class="row">
+      <strong>Kalibrer plakat-kant (piksler som skal klippes bort):</strong>
+    </div>
+    <div class="row">
+      <label>Venstre <input id="lPx" type="number" value="0" step="1"></label>
+      <label>Høyre <input id="rPx" type="number" value="0" step="1"></label>
+      <label>Topp <input id="tPx" type="number" value="0" step="1"></label>
+      <label>Bunn <input id="bPx" type="number" value="0" step="1"></label>
+    </div>
+    <div class="row">
+      <button data-nudge="L,-10">← -10</button>
+      <button data-nudge="L,-1">← -1</button>
+      <button data-nudge="L,1">← +1</button>
+      <span class="small">Venstre</span>
+      <button data-nudge="R,-1">→ -1</button>
+      <button data-nudge="R,1">→ +1</button>
+      <button data-nudge="R,10">→ +10</button>
+    </div>
+    <div class="row">
+      <button data-nudge="T,-10">↑ -10</button>
+      <button data-nudge="T,-1">↑ -1</button>
+      <button data-nudge="T,1">↑ +1</button>
+      <span class="small">Topp</span>
+      <button data-nudge="B,-1">↓ -1</button>
+      <button data-nudge="B,1">↓ +1</button>
+      <button data-nudge="B,10">↓ +10</button>
+    </div>
+    <div class="row">
+      <button id="applyBtn">Bruk beskjæring</button>
+      <button id="fitBtn">Vis kartområdet</button>
+      <button id="exportBtn">Last ned beskåret PNG</button>
+    </div>
+    <div id="status" class="small"></div>
+    <div class="small mono" id="boundsOut"></div>
+  </div>
+
   <div id="map"></div>
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const IMAGE_URL = "Turkart_site_opaque.png?v=1757665649";
-    const sw = [59.53201150450116, 10.764592376097804];
-    const ne = [59.54544337242526, 10.803638250791948];
-    const boundsLL = L.latLngBounds([sw[0], sw[1]], [ne[0], ne[1]]);
-    const map = L.map('map');
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'&copy; OpenStreetMap-bidragsytere'}).addTo(map);
-    const overlay = L.imageOverlay(IMAGE_URL, boundsLL, { opacity: 1.0 }).addTo(map);
-    overlay.once('load', ()=>{ fit(); document.getElementById('status').textContent='Kartbilde lastet'; });
-    overlay.on('error', ()=>{ document.getElementById('status').textContent='Fant ikke ' + IMAGE_URL; });
-    function fit(){ map.fitBounds(boundsLL, {padding:[10,10]}); }
-    document.getElementById('fitBtn').addEventListener('click', fit);
+    // Filnavn (samme mappe som index.html)
+    const IMAGE_URL = "Turkart.png";
+    const WORLD_CANDIDATES = ["Turkart.pgw", "Turkart.tfw", "Turkart.jgw"];
+
+    // ---- UTM32 -> WGS84 (ETRS89) ----
+    function utmToLatLon(E, N, zone=32, northern=true) {
+      const a=6378137.0, f=1/298.257222101, b=a*(1-f);
+      const e2=(a*a-b*b)/(a*a), ep2=(a*a-b*b)/(b*b), k0=0.9996;
+      const lon0=((zone-1)*6-180+3)*Math.PI/180;
+      const x=E-500000.0, y=northern?N:N-10000000.0;
+      const M=y/k0, mu=M/(a*(1-e2/4-3*e2*e2/64-5*e2**3/256));
+      const e1=(1-Math.sqrt(1-e2))/(1+Math.sqrt(1-e2));
+      const J1=3*e1/2-27*e1**3/32, J2=21*e1**2/16-55*e1**4/32, J3=151*e1**3/96, J4=1097*e1**4/512;
+      const fp=mu+J1*Math.sin(2*mu)+J2*Math.sin(4*mu)+J3*Math.sin(6*mu)+J4*Math.sin(8*mu);
+      const C1=ep2*Math.cos(fp)**2, T1=Math.tan(fp)**2;
+      const N1=a/Math.sqrt(1-e2*Math.sin(fp)**2), R1=N1*(1-e2)/(1-e2*Math.sin(fp)**2);
+      const D=x/(N1*k0);
+      const lat=fp-(N1*Math.tan(fp)/R1)*((D**2)/2-(5+3*T1+10*C1-4*C1**2-9*ep2)*(D**4)/24+(61+90*T1+298*C1+45*T1**2-252*ep2-3*C1**2)*(D**6)/720);
+      const lon=lon0+(D-(1+2*T1+C1)*(D**3)/6+(5-2*C1+28*T1-3*C1**2+8*ep2+24*T1**2)*(D**5)/120)/Math.cos(fp);
+      return [lat*180/Math.PI, lon*180/Math.PI];
+    }
+
+    // ---- Hjelpere ----
+    const $ = (id)=>document.getElementById(id);
+    const status = (msg)=> $('status').textContent = msg;
+
+    // Marger (i bildepiksler) som skal klippes bort fra plakaten:
+    let lPx=0, rPx=0, tPx=0, bPx=0;
+
+    // Global state
+    let imgW=0, imgH=0, A=0, E=0, C=0, F=0; // world
+    let overlay=null, map=null, boundsLL=null, croppedURL=null;
+
+    async function loadWorld() {
+      for (const name of WORLD_CANDIDATES) {
+        try {
+          const res = await fetch(name, { cache:'no-store' });
+          if (res.ok) {
+            const txt = await res.text();
+            const lines = txt.trim().split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+            if (lines.length>=6) {
+              A = parseFloat(lines[0]); const D = parseFloat(lines[1]);
+              const B = parseFloat(lines[2]); E = parseFloat(lines[3]);
+              C = parseFloat(lines[4]); F = parseFloat(lines[5]);
+              return name;
+            }
+          }
+        } catch {}
+      }
+      throw new Error("Fant ingen world-fil (Turkart.pgw / .tfw / .jgw).");
+    }
+
+    function computeBoundsForCrop() {
+      // UTM-kantene i meter, når vi klipper bort piksler langs kantene
+      const west  = (C - A/2) + A*lPx;
+      const north = (F - E/2) - Math.abs(E)*tPx; // E er vanligvis negativ
+      const cropW = imgW - lPx - rPx;
+      const cropH = imgH - tPx - bPx;
+      const east  = west  + A*cropW;
+      const south = north - Math.abs(E)*cropH;
+
+      const sw = utmToLatLon(west, south);
+      const ne = utmToLatLon(east, north);
+      return {sw, ne, utm:{west,south,east,north}, cropW, cropH};
+    }
+
+    function updateBoundsUI(res) {
+      const {sw, ne, utm, cropW, cropH} = res;
+      $('boundsOut').textContent =
+        `SW (lat,lon): ${sw[0].toFixed(8)}, ${sw[1].toFixed(8)}\n` +
+        `NE (lat,lon): ${ne[0].toFixed(8)}, ${ne[1].toFixed(8)}\n` +
+        `Crop (px): L=${lPx} R=${rPx} T=${tPx} B=${bPx}  →  ${cropW}×${cropH}\n` +
+        `UTM (m): W=${utm.west.toFixed(3)} S=${utm.south.toFixed(3)} E=${utm.east.toFixed(3)} N=${utm.north.toFixed(3)}`;
+    }
+
+    function renderOverlay() {
+      const res = computeBoundsForCrop();
+      updateBoundsUI(res);
+      boundsLL = L.latLngBounds([res.sw[0], res.sw[1]], [res.ne[0], res.ne[1]]);
+
+      // Lag/oppdater beskåret bilde i en canvas → dataURL
+      const img = new Image(); img.crossOrigin = "anonymous"; img.src = IMAGE_URL + "?v=" + Date.now();
+      img.onload = ()=>{
+        const sx = lPx, sy = tPx, sW = img.width - lPx - rPx, sH = img.height - tPx - bPx;
+        const canvas = document.createElement('canvas');
+        canvas.width = sW; canvas.height = sH;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, sx, sy, sW, sH, 0, 0, sW, sH);
+        croppedURL = canvas.toDataURL("image/png"); // opaque/transparent som i kilden
+
+        if (!overlay) {
+          overlay = L.imageOverlay(croppedURL, boundsLL, { opacity: 1.0 }).addTo(map);
+          setTimeout(()=>map.fitBounds(boundsLL, { padding:[10,10] }), 0);
+        } else {
+          overlay.setUrl(croppedURL);
+          overlay.setBounds(boundsLL);
+        }
+        status(`Beskåret ${sW}×${sH}px, lagt på kartet.`);
+      };
+      img.onerror = ()=> status("Klarte ikke å laste " + IMAGE_URL);
+    }
+
+    function nudge(which, delta) {
+      if (which==='L')      lPx = Math.max(0, lPx + delta);
+      else if (which==='R') rPx = Math.max(0, rPx + delta);
+      else if (which==='T') tPx = Math.max(0, tPx + delta);
+      else if (which==='B') bPx = Math.max(0, bPx + delta);
+      $('lPx').value = lPx; $('rPx').value = rPx; $('tPx').value = tPx; $('bPx').value = bPx;
+      renderOverlay();
+    }
+
+    async function init() {
+      // Last world + bilde-dimensjon
+      const worldName = await loadWorld();
+      status("Fant world-fil: " + worldName);
+      const img = new Image(); img.crossOrigin = "anonymous"; img.src = IMAGE_URL + "?v=" + Date.now();
+      await new Promise((res, rej)=>{ img.onload=()=>res(); img.onerror=()=>rej(new Error("Fikk ikke lastet "+IMAGE_URL)); });
+      imgW = img.naturalWidth; imgH = img.naturalHeight;
+
+      // Lag kart
+      map = L.map('map');
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'&copy; OpenStreetMap-bidragsytere'}).addTo(map);
+
+      // Start med ingen beskjæring
+      renderOverlay();
+
+      // UI
+      $('applyBtn').addEventListener('click', ()=> {
+        lPx = +$('lPx').value||0; rPx= +$('rPx').value||0; tPx= +$('tPx').value||0; bPx= +$('bPx').value||0;
+        renderOverlay();
+      });
+      $('fitBtn').addEventListener('click', ()=> map.fitBounds(boundsLL, {padding:[10,10]}));
+      $('exportBtn').addEventListener('click', ()=> {
+        if (!croppedURL) return;
+        const a = document.createElement('a');
+        a.href = croppedURL; a.download = 'Turkart_cropped.png'; a.click();
+      });
+
+      // Nudge-knapper
+      document.querySelectorAll('[data-nudge]').forEach(btn=>{
+        btn.addEventListener('click', ()=>{
+          const [edge, d] = btn.dataset.nudge.split(',');
+          nudge(edge, parseInt(d,10));
+        });
+      });
+
+      // Piltaster: Shift = 10 px, Alt = 1 px, ellers 5 px
+      window.addEventListener('keydown', (e)=>{
+        let step = e.altKey ? 1 : (e.shiftKey ? 10 : 5);
+        if (e.key==='ArrowLeft') nudge('L', step);
+        if (e.key==='ArrowRight') nudge('R', step);
+        if (e.key==='ArrowUp') nudge('T', step);
+        if (e.key==='ArrowDown') nudge('B', step);
+      });
+    }
+
+    init().catch(err=>{ status(err.message); console.error(err); });
   </script>
 </body>
 </html>
