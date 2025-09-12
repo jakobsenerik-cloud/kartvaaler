@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>nykart – ny PNG (opaque) + GPS</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>html,body{margin:0;height:100%}#map{height:100vh;width:100%}.panel{position:absolute;z-index:1000;top:10px;left:10px;background:rgba(255,255,255,.95);padding:8px 10px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);font:14px/1.4 system-ui}</style>
+</head>
+<body>
+  <div class="panel"><button id="fitBtn">Vis kartområdet</button> <small id="status">Laster…</small></div>
+  <div id="map"></div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const IMAGE_URL = "Turkart_site_opaque.png?v=1757665649";
+    const sw = [59.53201150450116, 10.764592376097804];
+    const ne = [59.54544337242526, 10.803638250791948];
+    const boundsLL = L.latLngBounds([sw[0], sw[1]], [ne[0], ne[1]]);
+    const map = L.map('map');
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'&copy; OpenStreetMap-bidragsytere'}).addTo(map);
+    const overlay = L.imageOverlay(IMAGE_URL, boundsLL, { opacity: 1.0 }).addTo(map);
+    overlay.once('load', ()=>{ fit(); document.getElementById('status').textContent='Kartbilde lastet'; });
+    overlay.on('error', ()=>{ document.getElementById('status').textContent='Fant ikke ' + IMAGE_URL; });
+    function fit(){ map.fitBounds(boundsLL, {padding:[10,10]}); }
+    document.getElementById('fitBtn').addEventListener('click', fit);
+  </script>
+</body>
+</html>
