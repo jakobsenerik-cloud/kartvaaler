@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Kartbilde – fri forvrengning + GPS (dråpe alltid over)</title>
+<title>Kartbilde – fri forvrengning + GPS (med fallback)</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
   html,body{margin:0;height:100%}
@@ -14,42 +14,41 @@
   .small{font-size:12px;color:#444}
   input[type=range]{width:140px}
   button{padding:6px 10px;border:1px solid #ccc;border-radius:8px;background:#fff;cursor:pointer}
-
-  /* Sørg for at markører ALLTID ligger over alt annet */
   .leaflet-marker-pane{ z-index: 10000 !important; }
-  /* Canvas-laget (warp) skal aldri fange klikk og ligge lavere */
   .leaflet-warpPane-pane{ z-index: 350 !important; pointer-events: none !important; }
-  /* Nøyaktighetssirkel under markører, men over warp */
   .leaflet-gpsPane-pane{ z-index: 800 !important; }
+  .warn{color:#b00020}
+  .ok{color:#0a7f2e}
 </style>
 </head>
 <body>
   <div class="panel">
     <button id="fitBtn">Vis kartområdet</button>
     <label class="small">Opasitet <input id="opacity" type="range" min="0" max="1" step="0.01" value="0.95"></label>
+
     <button id="fastBtn">Rask posisjon</button>
     <button id="preciseBtn">Presis posisjon</button>
-    <label class="small"><input id="watchToggle" type="checkbox" checked> Følg posisjon</label>
+    <label class="small"><input id="watchToggle" type="checkbox"> Følg posisjon</label>
     <label class="small"><input id="manualToggle" type="checkbox"> Manuell posisjon (klikk i kartet)</label>
     <button id="setManualBtn">Vis test-dråpe</button>
+    <label class="small"><input id="netFallback" type="checkbox" checked> Tillat nettverks-fallback</label>
+
     <span id="status" class="small">Laster…</span>
   </div>
   <div id="map"></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    // ---- Konfig ----
+    // ---- Konfig (hjørnene dine) ----
     const IMAGE_URL = "Turkart.png?v=" + Date.now();
-    // Låste hjørner (NW, NE, SE, SW)
     const CORNERS = [
-      [59.54593535667747, 10.765142440795898],
-      [59.539561484456776, 11.201162338256838],
-      [59.380786150970934, 11.190948486328127],
-      [59.387167906588274, 10.756945610046387]
+      [59.54593535667747, 10.765142440795898],  // NW
+      [59.539561484456776, 11.201162338256838], // NE
+      [59.380786150970934, 11.190948486328127], // SE
+      [59.387167906588274, 10.756945610046387]  // SW
     ];
     const GRID_COLS = 24, GRID_ROWS = 24;
 
-    // ---- Kart ----
     const map = L.map('map');
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
       maxZoom:19, attribution:'&copy; OpenStreetMap-bidragsytere'
@@ -59,17 +58,19 @@
     const opacityInput = document.getElementById('opacity');
     const statusEl = document.getElementById('status');
 
-    // --- PANE-ER: warp under, GPS-sirkel midt, markører øverst ---
-    const warpPane = map.createPane('warpPane');   // klasse: leaflet-warpPane-pane
+    // --- Pane-rekkefølge ---
+    const warpPane = map.createPane('warpPane');
+    warpPane.classList.add('leaflet-warpPane-pane');
     warpPane.style.zIndex = 350; warpPane.style.pointerEvents = 'none';
-    const gpsPane  = map.createPane('gpsPane');    // klasse: leaflet-gpsPane-pane
+    const gpsPane  = map.createPane('gpsPane');
+    gpsPane.classList.add('leaflet-gpsPane-pane');
     gpsPane.style.zIndex = 800;
 
     // ---- Last bilde og tegn (warp) ----
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = initWarp;
-    img.onerror = ()=> statusEl.textContent = "Klarte ikke å laste Turkart.png";
+    img.onerror = ()=> status('Klarte ikke å laste Turkart.png');
     img.src = IMAGE_URL;
 
     function initWarp(){
@@ -145,10 +146,10 @@
       fitBtn.onclick = ()=> map.fitBounds(bbox,{padding:[10,10]});
       map.fitBounds(bbox,{padding:[10,10]});
       render();
-      statusEl.textContent = "Klar";
+      status('Klar');
     }
 
-    // ---- GPS / Manuell posisjon (markør alltid over) ----
+    // ---- GPS / Manuell posisjon + fallback ----
     const dropIcon = L.divIcon({
       className: 'gps-drop',
       html: `<svg width="28" height="28" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg">
@@ -158,70 +159,139 @@
       iconSize:[28,28], iconAnchor:[14,26]
     });
 
-    // Vi bruker både en SVG-dråpe (L.marker) OG en tydelig sirkel (L.circleMarker)
     let userMarker=null, userDot=null, accuracyCircle=null;
+    const watchToggle = document.getElementById('watchToggle');
+    const manualToggle = document.getElementById('manualToggle');
+    const netFallback = document.getElementById('netFallback');
 
     function placeUser(ll, accuracy=0){
-      // SVG-dråpe
       if (!userMarker) userMarker = L.marker(ll, {icon: dropIcon, zIndexOffset: 10000}).addTo(map);
       else userMarker.setLatLng(ll);
-      // Tydelig blå punktmarkør på toppen
-      if (!userDot) userDot = L.circleMarker(ll, {
-        radius: 7, weight:2, color:'#0b5cff', fill:true, fillOpacity:1, opacity:1
-      }).addTo(map);
+      if (!userDot) userDot = L.circleMarker(ll, {radius: 7, weight:2, color:'#0b5cff', fill:true, fillOpacity:1, opacity:1}).addTo(map);
       else userDot.setLatLng(ll);
-      // Nøyaktighetssirkel (i egen pane, under markører)
-      if (!accuracyCircle) accuracyCircle = L.circle(ll, {
-        pane:'gpsPane', radius: accuracy||0, color:'#2563eb', weight:1, fillOpacity:0.05
-      }).addTo(map);
+      if (!accuracyCircle) accuracyCircle = L.circle(ll, {pane:'gpsPane', radius: accuracy||0, color:'#2563eb', weight:1, fillOpacity:0.05}).addTo(map);
       else { accuracyCircle.setLatLng(ll); if (accuracy!=null) accuracyCircle.setRadius(accuracy); }
       map.setView(ll);
     }
 
     const status = (msg)=> statusEl.innerHTML = msg;
 
-    const GEO_FAST   = { enableHighAccuracy:false, timeout:15000, maximumAge:60000 };
-    const GEO_PRECISE= { enableHighAccuracy:true,  timeout:30000, maximumAge:0 };
-    let watchActive=false;
-
-    function onLocationFound(e){
-      const {lat,lng,accuracy} = e;
-      placeUser([lat,lng], accuracy);
-      status(`Posisjon: ${lat.toFixed(6)}, ${lng.toFixed(6)} (±${Math.round(accuracy)} m)`);
+    function permHint(){
+      if (!navigator.permissions) return;
+      navigator.permissions.query({name:'geolocation'}).then(s=>{
+        if (s.state==='denied') status('<span class="warn">Posisjon blokkert: Sjekk nettstedsinnstillinger → Posisjon: Tillat.</span>');
+        else if (s.state==='prompt') status('Tillat posisjon når nettleseren spør.');
+      }).catch(()=>{});
     }
-    function onLocationError(e){ status('<span style="color:#b00020">GPS-feil: '+e.message+'</span>'); }
 
-    function locateOnce(opts){ map.locate(Object.assign({ setView:false, watch:false }, opts)); }
-    function startWatch(opts){ map.stopLocate(); watchActive=true; map.locate(Object.assign({ setView:false, watch:true }, opts)); }
-    function stopWatch(){ map.stopLocate(); watchActive=false; }
+    function geoGet(opts){
+      return new Promise((resolve, reject)=>{
+        if (!navigator.geolocation) return reject(new Error('Geolocation ikke støttet'));
+        navigator.geolocation.getCurrentPosition(
+          pos => resolve({ kind:'geo', lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy }),
+          err => reject(Object.assign(new Error(err.message), {code: err.code})),
+          opts
+        );
+      });
+    }
 
-    map.on('locationfound', onLocationFound);
-    map.on('locationerror', onLocationError);
+    async function ipFallback(){
+      // IP-basert posisjon (omtrentlig). Ingen nøkkel kreves.
+      try{
+        const r = await fetch('https://ipwho.is/?fields=success,latitude,longitude,city,country');
+        const j = await r.json();
+        if (j && j.success && typeof j.latitude==='number' && typeof j.longitude==='number'){
+          return { kind:'ip', lat: j.latitude, lng: j.longitude, acc: 20000, note: `${j.city||''} ${j.country||''}`.trim() };
+        }
+      }catch{}
+      return null;
+    }
+
+    async function tryLocate(mode){
+      const FAST    = { enableHighAccuracy:false, timeout:12000, maximumAge:300000 };
+      const PRECISE = { enableHighAccuracy:true,  timeout:30000, maximumAge:0 };
+
+      const opts = (mode==='precise') ? PRECISE : FAST;
+      status(`Henter ${mode==='precise'?'presis':'rask'} posisjon…`);
+
+      try{
+        const p = await geoGet(opts);
+        placeUser([p.lat, p.lng], p.acc);
+        status(`<span class="ok">Geolokasjon:</span> ${p.lat.toFixed(6)}, ${p.lng.toFixed(6)} (±${Math.round(p.acc)} m)`);
+        return true;
+      }catch(e){
+        const codes = {1:'PERMISSION_DENIED',2:'POSITION_UNAVAILABLE',3:'TIMEOUT'};
+        status(`<span class="warn">Geolokasjon feilet:</span> ${codes[e.code]||'ERROR'} – ${e.message}`);
+        permHint();
+        if (netFallback.checked){
+          const ip = await ipFallback();
+          if (ip){
+            placeUser([ip.lat, ip.lng], ip.acc);
+            status(`<span class="ok">Nettverks-fallback:</span> ${ip.lat.toFixed(6)}, ${ip.lng.toFixed(6)} (omtrentlig)`);
+            return true;
+          } else {
+            status('<span class="warn">Nettverks-fallback feilet også.</span>');
+          }
+        }
+        return false;
+      }
+    }
+
+    // Watch-håndtering: start bare hvis vi fikk en posisjon først
+    let watchActive=false, watchId=null;
+    function startWatch(mode){
+      if (!navigator.geolocation) return;
+      const opts = (mode==='precise')
+        ? { enableHighAccuracy:true, timeout:30000, maximumAge:0 }
+        : { enableHighAccuracy:false, timeout:15000, maximumAge:60000 };
+      if (watchId!=null){ navigator.geolocation.clearWatch(watchId); watchId=null; }
+      watchId = navigator.geolocation.watchPosition(
+        pos => {
+          placeUser([pos.coords.latitude, pos.coords.longitude], pos.coords.accuracy);
+          status(`<span class="ok">Oppdatert:</span> ${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)} (±${Math.round(pos.coords.accuracy)} m)`);
+        },
+        err => {
+          const codes = {1:'PERMISSION_DENIED',2:'POSITION_UNAVAILABLE',3:'TIMEOUT'};
+          status(`<span class="warn">Watch feilet:</span> ${codes[err.code]||'ERROR'} – ${err.message}`);
+        },
+        opts
+      );
+      watchActive=true;
+    }
+    function stopWatch(){ if (watchId!=null) navigator.geolocation.clearWatch(watchId); watchId=null; watchActive=false; }
 
     // Manuell klikk
-    const watchToggle = document.getElementById('watchToggle');
-    const manualToggle = document.getElementById('manualToggle');
     map.on('click', e=>{
-      if (!manualToggle.checked) return;
+      if (!document.getElementById('manualToggle').checked) return;
       placeUser(e.latlng, 0);
       status(`Manuell posisjon: ${e.latlng.lat.toFixed(6)}, ${e.latlng.lng.toFixed(6)}`);
     });
 
     // Knapper
-    document.getElementById('fastBtn').onclick    = ()=>{ stopWatch(); locateOnce(GEO_FAST);    if (watchToggle.checked) startWatch(GEO_FAST); };
-    document.getElementById('preciseBtn').onclick = ()=>{ stopWatch(); locateOnce(GEO_PRECISE); if (watchToggle.checked) startWatch(GEO_PRECISE); };
-    watchToggle.onchange = (e)=>{ if (e.target.checked && !watchActive) startWatch(GEO_FAST); else if (!e.target.checked) stopWatch(); };
+    document.getElementById('fastBtn').onclick = async ()=>{
+      stopWatch();
+      const ok = await tryLocate('fast');
+      if (ok && document.getElementById('watchToggle').checked) startWatch('fast');
+    };
+    document.getElementById('preciseBtn').onclick = async ()=>{
+      stopWatch();
+      const ok = await tryLocate('precise');
+      if (ok && document.getElementById('watchToggle').checked) startWatch('precise');
+    };
+    document.getElementById('watchToggle').onchange = (e)=>{
+      if (!e.target.checked) stopWatch();
+      // (watch startes etter vellykket fast/presis-knapp)
+    };
 
-    // TEST-knapp: sett dråpe til 59.464434, 10.779567
+    // Test-dråpe (koordinatene du oppga)
     document.getElementById('setManualBtn').onclick = ()=>{
       const ll = L.latLng(59.464434, 10.779567);
       placeUser(ll, 0);
       status(`Manuell posisjon: ${ll.lat.toFixed(6)}, ${ll.lng.toFixed(6)}`);
     };
 
-    // Start med “rask”
-    locateOnce(GEO_FAST);
-    if (watchToggle.checked) startWatch(GEO_FAST);
+    // Først: tegn kart og warp i initWarp(); ikke autostart geolokasjon
+    function status(msg){ statusEl.innerHTML = msg; }
   </script>
 </body>
 </html>
