@@ -1,33 +1,32 @@
 <!DOCTYPE html>
 <html lang="no">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>nykart – fri forvrengning (Leaflet.DistortableImage)</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>nykart – fri forvrengning (Leaflet.DistortableImage)</title>
 
-  <!-- Leaflet -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
-  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Leaflet CSS (primær + fallback) -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" onerror="/* CSS fallback */">
 
-  <!-- Leaflet.Toolbar (må lastes før DistortableImage) -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-toolbar@0.4.0-alpha.2/dist/leaflet.toolbar.css">
-  <script src="https://cdn.jsdelivr.net/npm/leaflet-toolbar@0.4.0-alpha.2/dist/leaflet.toolbar.js"></script>
+<!-- DistortableImage CSS + vendor CSS (rekkefølge betyr noe) -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-distortableimage@0.21.9/dist/vendor.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-distortableimage@0.21.9/dist/leaflet.distortableimage.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet-distortableimage@0.21.9/dist/vendor.css" onerror="/* CSS fallback */">
+<link rel="stylesheet" href="https://unpkg.com/leaflet-distortableimage@0.21.9/dist/leaflet.distortableimage.css" onerror="/* CSS fallback */">
 
-  <!-- Leaflet.DistortableImage (riktig pakke-navn + sti) -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-distortableimage@0.21.9/dist/leaflet.distortableimage.css">
-  <script src="https://cdn.jsdelivr.net/npm/leaflet-distortableimage@0.21.9/dist/leaflet.distortableimage.js"></script>
-
-  <style>
-    html,body{margin:0;height:100%} #map{height:100vh;width:100%}
-    .panel{position:absolute;z-index:1000;top:10px;left:10px;background:rgba(255,255,255,.97);
-      padding:10px 12px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.14);
-      font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;display:grid;gap:8px;max-width:760px}
-    .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-    button{padding:6px 10px;border:1px solid #ccc;border-radius:8px;background:#fff;cursor:pointer}
-    .small{font-size:12px;color:#444}
-    .mono{font:12px/1.35 ui-monospace,Consolas,Menlo,monospace;white-space:break-spaces}
-    .err{color:#b00020}
-  </style>
+<style>
+  html,body{margin:0;height:100%}
+  #map{height:100vh;width:100%}
+  .panel{position:absolute;z-index:1000;top:10px;left:10px;background:rgba(255,255,255,.97);
+    padding:10px 12px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.14);
+    font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;display:grid;gap:8px;max-width:780px}
+  .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  button{padding:6px 10px;border:1px solid #ccc;border-radius:8px;background:#fff;cursor:pointer}
+  .small{font-size:12px;color:#444}
+  .mono{font:12px/1.35 ui-monospace,Consolas,Menlo,monospace;white-space:break-spaces}
+  .err{color:#b00020}
+</style>
 </head>
 <body>
   <div class="panel">
@@ -43,115 +42,122 @@
 
   <div id="map"></div>
 
+  <!-- Leaflet JS (primær + fallback) -->
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"
+    onerror="this.onerror=null;this.remove();var s=document.createElement('script');s.src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';document.head.appendChild(s);"></script>
+
+  <!-- DistortableImage vendor JS må lastes FØR hovedscriptet -->
+  <script src="https://cdn.jsdelivr.net/npm/leaflet-distortableimage@0.21.9/dist/vendor.js"
+    onerror="this.onerror=null;this.remove();var s=document.createElement('script');s.src='https://unpkg.com/leaflet-distortableimage@0.21.9/dist/vendor.js';document.head.appendChild(s);"></script>
+
+  <!-- DistortableImage hovedscript (bruk fabrikken L.distortableImageOverlay) -->
+  <script src="https://cdn.jsdelivr.net/npm/leaflet-distortableimage@0.21.9/dist/leaflet.distortableimage.js"
+    onerror="this.onerror=null;this.remove();var s=document.createElement('script');s.src='https://unpkg.com/leaflet-distortableimage@0.21.9/dist/leaflet.distortableimage.js';document.head.appendChild(s);"></script>
+
   <script>
-    // ---------- Konfig ----------
-    const IMAGE_URL = "Turkart.png?v=" + Date.now();
-    const WORLD_CANDIDATES = ["Turkart.pgw","Turkart.tfw","Turkart.jgw"];
+  const IMAGE_URL = "Turkart.png?v=" + Date.now();
+  const WORLD_CANDIDATES = ["Turkart.pgw","Turkart.tfw","Turkart.jgw"];
+  const $ = id => document.getElementById(id);
+  const status = msg => $('status').innerHTML = msg;
 
-    const $ = id => document.getElementById(id);
-    const status = msg => $('status').innerHTML = msg;
+  function pluginsOK(){
+    const okL = !!window.L;
+    const okVendor = !!(L && (L.Toolbar || window.LeafletToolbar || (L.Control && L.Control.Toolbar)));
+    const okDI = !!(L && typeof L.distortableImageOverlay === 'function');
+    if (!okL) { status('<span class="err">Leaflet mangler (CDN blokkert?).</span>'); return false; }
+    if (!okVendor) { status('<span class="err">DistortableImage vendor.js (Toolbar) mangler.</span>'); return false; }
+    if (!okDI) { status('<span class="err">Leaflet.DistortableImage mangler.</span>'); return false; }
+    return true;
+  }
 
-    // Sanity-check: er plugin lastet?
-    function checkPlugins() {
-      const okLeaflet = !!window.L;
-      const okToolbar = !!(window.L && (L.Toolbar || L.Toolbar2));
-      const okDistort = !!(window.L && typeof L.distortableImageOverlay === 'function');
+  // UTM32 -> WGS84 (for world-init)
+  function utmToLatLon(E, N, zone=32, northern=true){
+    const a=6378137, f=1/298.257222101, b=a*(1-f);
+    const e2=(a*a-b*b)/(a*a), ep2=(a*a-b*b)/(b*b), k0=0.9996;
+    const lon0=((zone-1)*6-180+3)*Math.PI/180;
+    const x=E-500000, y=northern?N:N-10000000;
+    const M=y/k0, mu=M/(a*(1-e2/4-3*e2**2/64-5*e2**3/256));
+    const e1=(1-Math.sqrt(1-e2))/(1+Math.sqrt(1-e2));
+    const J1=3*e1/2-27*e1**3/32, J2=21*e1**2/16-55*e1**4/32, J3=151*e1**3/96, J4=1097*e1**4/512;
+    const fp=mu+J1*Math.sin(2*mu)+J2*Math.sin(4*mu)+J3*Math.sin(6*mu)+J4*Math.sin(8*mu);
+    const C1=ep2*Math.cos(fp)**2, T1=Math.tan(fp)**2;
+    const N1=a/Math.sqrt(1-e2*Math.sin(fp)**2), R1=N1*(1-e2)/(1-e2*Math.sin(fp)**2);
+    const D=x/(N1*k0);
+    const lat=fp-(N1*Math.tan(fp)/R1)*((D**2)/2-(5+3*T1+10*C1-4*C1**2-9*ep2)*(D**4)/24+(61+90*T1+298*C1+45*T1**2-252*ep2-3*C1**2)*(D**6)/720);
+    const lon=lon0+(D-(1+2*T1+C1)*(D**3)/6+(5-2*C1+28*T1-3*C1**2+8*ep2+24*T1**2)*(D**5)/120)/Math.cos(fp);
+    return [lat*180/Math.PI, lon*180/Math.PI];
+  }
 
-      if (!okLeaflet) { status('<span class="err">Leaflet mangler.</span>'); return false; }
-      if (!okToolbar){ status('<span class="err">Leaflet.Toolbar mangler (cdn kan være blokkert?).</span>'); return false; }
-      if (!okDistort){ status('<span class="err">Leaflet.DistortableImage mangler – sjekk CDN-lenka og adblock.</span>'); return false; }
-      return true;
+  async function loadWorldCorners() {
+    for (const name of WORLD_CANDIDATES) {
+      try {
+        const r = await fetch(name, { cache:'no-store' });
+        if (!r.ok) continue;
+        const t = (await r.text()).trim().split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+        if (t.length < 6) continue;
+        const A=+t[0], E=+t[3], C=+t[4], F=+t[5];
+        const img = await new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=()=>rej(); im.src=IMAGE_URL; });
+        const west  = C - A/2, north = F - E/2;
+        const east  = west + A*img.naturalWidth;
+        const south = north + E*img.naturalHeight; // E<0 -> south < north
+        const [nwLat,nwLng] = utmToLatLon(west, north);
+        const [neLat,neLng] = utmToLatLon(east, north);
+        const [swLat,swLng] = utmToLatLon(west, south);
+        const [seLat,seLng] = utmToLatLon(east, south);
+        // Init-rekkefølge: NW, NE, SW, SE (Z-mønster)
+        return { ok:true, name, corners: [
+          L.latLng(nwLat, nwLng),
+          L.latLng(neLat, neLng),
+          L.latLng(swLat, swLng),
+          L.latLng(seLat, seLng),
+        ]};
+      } catch {}
     }
+    return { ok:false };
+  }
 
-    // UTM32 -> WGS84 (for world-init)
-    function utmToLatLon(E, N, zone=32, northern=true){
-      const a=6378137, f=1/298.257222101, b=a*(1-f);
-      const e2=(a*a-b*b)/(a*a), ep2=(a*a-b*b)/(b*b), k0=0.9996;
-      const lon0=((zone-1)*6-180+3)*Math.PI/180;
-      const x=E-500000, y=northern?N:N-10000000;
-      const M=y/k0, mu=M/(a*(1-e2/4-3*e2**2/64-5*e2**3/256));
-      const e1=(1-Math.sqrt(1-e2))/(1+Math.sqrt(1-e2));
-      const J1=3*e1/2-27*e1**3/32, J2=21*e1**2/16-55*e1**4/32, J3=151*e1**3/96, J4=1097*e1**4/512;
-      const fp=mu+J1*Math.sin(2*mu)+J2*Math.sin(4*mu)+J3*Math.sin(6*mu)+J4*Math.sin(8*mu);
-      const C1=ep2*Math.cos(fp)**2, T1=Math.tan(fp)**2;
-      const N1=a/Math.sqrt(1-e2*Math.sin(fp)**2), R1=N1*(1-e2)/(1-e2*Math.sin(fp)**2);
-      const D=x/(N1*k0);
-      const lat=fp-(N1*Math.tan(fp)/R1)*((D**2)/2-(5+3*T1+10*C1-4*C1**2-9*ep2)*(D**4)/24+(61+90*T1+298*C1+45*T1**2-252*ep2-3*C1**2)*(D**6)/720);
-      const lon=lon0+(D-(1+2*T1+C1)*(D**3)/6+(5-2*C1+28*T1-3*C1**2+8*ep2+24*T1**2)*(D**5)/120)/Math.cos(fp);
-      return [lat*180/Math.PI, lon*180/Math.PI];
-    }
+  (async function init(){
+    if (!pluginsOK()) return;
 
-    async function loadWorldCorners() {
-      for (const name of WORLD_CANDIDATES) {
-        try {
-          const r = await fetch(name, { cache:'no-store' });
-          if (!r.ok) continue;
-          const t = (await r.text()).trim().split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-          if (t.length < 6) continue;
-          const A=+t[0], E=+t[3], C=+t[4], F=+t[5];
-          // Bildestørrelse
-          const img = await new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=()=>rej(); im.src=IMAGE_URL; });
-          const west  = C - A/2, north = F - E/2;
-          const east  = west + A*img.naturalWidth;
-          const south = north + E*img.naturalHeight; // E<0 -> south < north
-          const [nwLat,nwLng] = utmToLatLon(west, north);
-          const [neLat,neLng] = utmToLatLon(east, north);
-          const [swLat,swLng] = utmToLatLon(west, south);
-          const [seLat,seLng] = utmToLatLon(east, south);
-          // NB: init-rekkefølge skal være NW, NE, SW, SE (Z-mønster). :contentReference[oaicite:0]{index=0}
-          return { ok:true, name, corners: [
-            L.latLng(nwLat, nwLng),
-            L.latLng(neLat, neLng),
-            L.latLng(swLat, swLng),
-            L.latLng(seLat, seLng),
-          ]};
-        } catch {}
-      }
-      return { ok:false };
-    }
+    const map = L.map('map');
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '&copy; OpenStreetMap-bidragsytere'
+    }).addTo(map);
 
-    (async function init(){
-      if (!checkPlugins()) return;
+    let start = await loadWorldCorners();
+    let corners = start.ok ? start.corners : [
+      L.latLng(59.55, 10.70),
+      L.latLng(59.55, 10.90),
+      L.latLng(59.45, 10.70), // SW (init: NW,NE,SW,SE)
+      L.latLng(59.45, 10.90),
+    ];
 
-      const map = L.map('map');
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19, attribution: '&copy; OpenStreetMap-bidragsytere'
-      }).addTo(map);
+    // Riktig API: fabrikkfunksjonen (ikke "new")
+    const overlay = L.distortableImageOverlay(IMAGE_URL, {
+      corners,
+      editable: true,
+      mode: 'distort',
+      opacity: 0.95,
+      suppressToolbar: false
+    }).addTo(map);
 
-      let start = await loadWorldCorners();
-      let corners = start.ok ? start.corners : [
-        L.latLng(59.55, 10.70),
-        L.latLng(59.55, 10.90),
-        L.latLng(59.45, 10.70), // SW (init krever NW,NE,SW,SE)
-        L.latLng(59.45, 10.90),
-      ];
+    overlay.once('load', ()=> map.fitBounds(overlay.getBounds(), {padding:[10,10]}));
 
-      // Riktig API er fabrikkfunksjonen L.distortableImageOverlay(...) (ikke "new"). :contentReference[oaicite:1]{index=1}
-      const overlay = L.distortableImageOverlay(IMAGE_URL, {
-        corners,
-        editable: true,
-        mode: 'distort',
-        opacity: 0.95,
-        suppressToolbar: false
-      }).addTo(map);
+    $('fitBtn').onclick = ()=> map.fitBounds(overlay.getBounds(), {padding:[10,10]});
+    $('resetBtn').onclick = async ()=>{
+      const w = await loadWorldCorners();
+      if (w.ok){ overlay.setCorners(w.corners); map.fitBounds(overlay.getBounds(), {padding:[10,10]}); status(`Tilbakestilt fra ${w.name}.`); }
+      else { status("Fant ingen world-fil å tilbakestille fra."); }
+    };
+    $('copyBtn').onclick = ()=>{
+      const c = overlay.getCorners(); // NW, NE, SE, SW
+      const txt = `NW: [${c[0].lat}, ${c[0].lng}]\nNE: [${c[1].lat}, ${c[1].lng}]\nSE: [${c[2].lat}, ${c[2].lng}]\nSW: [${c[3].lat}, ${c[3].lng}]`;
+      $('out').textContent = txt;
+      navigator.clipboard?.writeText(txt).then(()=>status("Hjørner kopiert.")).catch(()=>{});
+    };
 
-      overlay.once('load', ()=> map.fitBounds(overlay.getBounds(), {padding:[10,10]}));
-
-      $('fitBtn').onclick = ()=> map.fitBounds(overlay.getBounds(), {padding:[10,10]});
-      $('resetBtn').onclick = async ()=>{
-        const w = await loadWorldCorners();
-        if (w.ok){ overlay.setCorners(w.corners); map.fitBounds(overlay.getBounds(), {padding:[10,10]}); status(`Tilbakestilt fra ${w.name}.`); }
-        else { status("Fant ingen world-fil å tilbakestille fra."); }
-      };
-      $('copyBtn').onclick = ()=>{
-        const c = overlay.getCorners(); // returnerer NW, NE, SE, SW
-        const txt = `NW: [${c[0].lat}, ${c[0].lng}]\nNE: [${c[1].lat}, ${c[1].lng}]\nSE: [${c[2].lat}, ${c[2].lng}]\nSW: [${c[3].lat}, ${c[3].lng}]`;
-        $('out').textContent = txt;
-        navigator.clipboard?.writeText(txt).then(()=>status("Hjørner kopiert.")).catch(()=>{});
-      };
-
-      status(start.ok ? `Startet med georeferanse fra ${start.name}. Klikk bildet og dra hjørnene.` : "Ingen world-fil funnet – dra hjørnene til riktig posisjon.");
-    })();
+    status(start.ok ? `Startet med georeferanse fra ${start.name}. Klikk bildet og dra hjørnene.` : "Ingen world-fil funnet – dra hjørnene til riktig posisjon.");
+  })();
   </script>
 </body>
 </html>
