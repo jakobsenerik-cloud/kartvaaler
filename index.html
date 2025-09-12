@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>Turkart + OSM + LIVE GPS (mobil pinch & full zoom-kontroll)</title>
+<title>Turkart + OSM + LIVE GPS</title>
 <style>
   html,body{margin:0;height:100%;overflow:hidden;background:#eaf0f4}
   #ui{position:fixed;z-index:10;top:10px;left:10px;background:rgba(255,255,255,.95);
@@ -13,7 +13,7 @@
   input[type=range]{width:120px}
   button{padding:6px 10px;border:1px solid #ccc;border-radius:8px;background:#fff;cursor:pointer}
   #map{position:fixed;inset:0}
-  #canvas{position:absolute;left:0;top:0;width:100%;height:100%;touch-action:none} /* viktig for mobil gestures */
+  #canvas{position:absolute;left:0;top:0;width:100%;height:100%;touch-action:none}
   /* Markør-overlegg */
   #marker{position:absolute; z-index:3; width:28px; height:28px; transform:translate(-14px,-26px); pointer-events:none}
   #marker svg{display:block}
@@ -31,10 +31,9 @@
     <button id="zoomIn">+</button>
     <button id="zoomOut">−</button>
     <button id="zoomFullOut">Zoom ut maks</button>
-    <button id="startFast">Start rask</button>
-    <button id="startPrecise">Start presis</button>
+    <button id="centerMe">Sentrer meg</button>
+    <button id="showPosition">Vis min posisjon</button>
     <button id="stopWatch">Stopp</button>
-    <button id="testBtn">Test-dråpe</button>
     <span id="status">Laster…</span>
   </div>
 
@@ -64,7 +63,7 @@
   const GRID_COLS=24, GRID_ROWS=24;
   const R = 6378137, TWO_PI_R = 2*Math.PI*R;
 
-  // Nye zoom-grenser
+  // Zoom-grenser
   const MIN_SCALE = 0.01;
   const MAX_SCALE = 8000;
 
@@ -331,7 +330,7 @@
   img.onerror = ()=> setStatus('Klarte ikke å laste Turkart.png (må ligge i samme mappe som index.html)');
   img.src = IMAGE_URL;
 
-  // ---- UI ----
+  // ---- UI: knapper ----
   document.getElementById('fitBtn').onclick = fitView;
   opacityInput.oninput = render;
 
@@ -359,18 +358,18 @@
 
   // ---- GPS / dråpe ----
   let watchId=null, lastPos=null;
+
   function updateMarker(lat,lng,acc){
     const m=mercXY(lat,lng);
     lastPos = {mx:m.x,my:m.y,acc:acc||0};
     render();
   }
-  function startWatch(mode){
+  function startWatchPrecise(){
     if (!navigator.geolocation){ setStatus('Geolocation ikke støttet'); return; }
     stopWatch();
-    const opts = (mode==='precise') ? { enableHighAccuracy:true, timeout:30000, maximumAge:0 }
-                                    : { enableHighAccuracy:false, timeout:20000, maximumAge:60000 };
+    const opts = { enableHighAccuracy:true, timeout:30000, maximumAge:0 };
     marker.hidden = false; accCircle.hidden = false;
-    setStatus(`Sporer (${mode==='precise'?'presis':'rask'})…`);
+    setStatus('Sporer (presis)…');
     watchId = navigator.geolocation.watchPosition(
       pos=>{ updateMarker(pos.coords.latitude,pos.coords.longitude,pos.coords.accuracy);
              setStatus(`Sporer: ${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)} (±${Math.round(pos.coords.accuracy)} m)`); },
@@ -380,10 +379,28 @@
     );
   }
   function stopWatch(){ if (watchId!=null){ navigator.geolocation.clearWatch(watchId); watchId=null; } setStatus('Sporing stoppet'); }
-  document.getElementById('startFast').onclick    = ()=> startWatch('fast');
-  document.getElementById('startPrecise').onclick = ()=> startWatch('precise');
-  document.getElementById('stopWatch').onclick    = ()=> stopWatch();
-  document.getElementById('testBtn').onclick      = ()=>{ const lat=59.464434,lng=10.779567; updateMarker(lat,lng,0); setStatus(`Test-dråpe: ${lat.toFixed(6)}, ${lng.toFixed(6)}`); };
+
+  // Sentrer meg: hvis vi har posisjon, panorer. Hvis ikke, hent én posisjon (uten å starte sporing).
+  async function centerOnMe(){
+    if (lastPos){
+      center.x = lastPos.mx; center.y = lastPos.my; render(); return;
+    }
+    if (!navigator.geolocation){ setStatus('Geolocation ikke støttet'); return; }
+    setStatus('Henter posisjon…');
+    navigator.geolocation.getCurrentPosition(
+      pos => { updateMarker(pos.coords.latitude,pos.coords.longitude,pos.coords.accuracy);
+               center.x = lastPos.mx; center.y = lastPos.my; render();
+               setStatus(`Posisjon: ${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)} (±${Math.round(pos.coords.accuracy)} m)`); },
+      err => { const code=({1:'PERMISSION_DENIED',2:'POSITION_UNAVAILABLE',3:'TIMEOUT'})[err.code]||'ERROR';
+               setStatus(`Kunne ikke hente posisjon: ${code} – ${err.message}`); },
+      { enableHighAccuracy:true, timeout:15000, maximumAge:0 }
+    );
+  }
+
+  // Knappe-handlere
+  document.getElementById('centerMe').onclick    = centerOnMe;
+  document.getElementById('showPosition').onclick = startWatchPrecise;
+  document.getElementById('stopWatch').onclick   = stopWatch;
 
 })();
 </script>
