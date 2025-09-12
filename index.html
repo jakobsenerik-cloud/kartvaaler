@@ -3,20 +3,25 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Turkart + LIVE GPS (uten CDN)</title>
+<title>Turkart + OSM + LIVE GPS (uten biblioteker)</title>
 <style>
-  html,body{margin:0;height:100%;overflow:hidden}
+  html,body{margin:0;height:100%;overflow:hidden;background:#eaf0f4}
   #ui{position:fixed;z-index:10;top:10px;left:10px;background:rgba(255,255,255,.95);
       padding:8px 10px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);
       font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   #status{font-size:12px;color:#444}
   input[type=range]{width:140px}
   button{padding:6px 10px;border:1px solid #ccc;border-radius:8px;background:#fff;cursor:pointer}
-  #map{position:fixed;inset:0; background:#eef3f6}
+  #map{position:fixed;inset:0}
+  #canvas{position:absolute;left:0;top:0;width:100%;height:100%}
   /* Markør-overlegg */
-  #marker{position:absolute; z-index:9; width:28px; height:28px; transform:translate(-14px,-26px); pointer-events:none}
+  #marker{position:absolute; z-index:3; width:28px; height:28px; transform:translate(-14px,-26px); pointer-events:none}
   #marker svg{display:block}
-  #accCircle{position:absolute; z-index:8; border:2px solid rgba(37,99,235,.6); background:rgba(37,99,235,.08); border-radius:50%; transform:translate(-50%,-50%); pointer-events:none}
+  #accCircle{position:absolute; z-index:2; border:2px solid rgba(37,99,235,.6); background:rgba(37,99,235,.08); border-radius:50%; transform:translate(-50%,-50%); pointer-events:none}
+  /* Attribution */
+  #attrib{position:fixed;right:10px;bottom:8px;z-index:5;background:rgba(255,255,255,.9);
+          padding:4px 6px;border-radius:6px;font:12px/1.2 system-ui}
+  #attrib a{color:#0366d6;text-decoration:none}
 </style>
 </head>
 <body>
@@ -29,6 +34,7 @@
     <button id="testBtn">Test-dråpe</button>
     <span id="status">Laster…</span>
   </div>
+
   <div id="map">
     <canvas id="canvas"></canvas>
     <div id="marker" hidden>
@@ -39,6 +45,8 @@
     </div>
     <div id="accCircle" hidden></div>
   </div>
+
+  <div id="attrib">Kartgrunnlag: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap-bidragsytere</a></div>
 
 <script>
 (function(){
@@ -51,6 +59,7 @@
     [59.387167906588274, 10.756945610046387]
   ];
   const GRID_COLS=24, GRID_ROWS=24;
+  const R = 6378137, TWO_PI_R = 2*Math.PI*R;
 
   const statusEl = document.getElementById('status');
   const setStatus = (m)=> statusEl.textContent = m;
@@ -62,71 +71,133 @@
   const accCircle = document.getElementById('accCircle');
   const opacityInput = document.getElementById('opacity');
 
-  // ---- Web Mercator projeksjon (uten bibliotek) ----
-  const R = 6378137;
+  // Web Mercator proj.
   const toRad = d => d*Math.PI/180;
   const mercXY = (lat, lng)=> {
     const x = R * toRad(lng);
     const y = R * Math.log(Math.tan(Math.PI/4 + toRad(lat)/2));
     return {x,y};
   };
-
-  // View (center i mercator + skala px per meter)
-  let center = {x:0, y:0};
-  let scale = 1; // px per meter
-  let img = new Image();
-  let imgW=0,imgH=0;
   const cornersLL = CORNERS.map(([lat,lng])=>({lat,lng}));
   const cornersM  = cornersLL.map(c=>mercXY(c.lat,c.lng));
 
-  // Init center og skala for å passe bildet til vindu
+  // View state (center i mercator + skala px per meter)
+  let cssW=0, cssH=0;
+  let center = {x:0, y:0};
+  let scale = 1; // px per meter
+  let img = new Image(), imgW=0, imgH=0;
+
+  function resize(){
+    const rect = canvas.getBoundingClientRect();
+    cssW = canvas.width = Math.round(rect.width);
+    cssH = canvas.height= Math.round(rect.height);
+    render();
+  }
+  new ResizeObserver(resize).observe(document.getElementById('map'));
+
   function fitView(){
     const xs = cornersM.map(p=>p.x), ys = cornersM.map(p=>p.y);
     const minX=Math.min(...xs), maxX=Math.max(...xs);
     const minY=Math.min(...ys), maxY=Math.max(...ys);
     const pad = 0.08; // 8% padding
-    const vw = canvas.width, vh = canvas.height;
-    const neededScaleX = (vw*(1-pad*2)) / (maxX-minX);
-    const neededScaleY = (vh*(1-pad*2)) / (maxY-minY);
+    const neededScaleX = (cssW*(1-pad*2)) / (maxX-minX);
+    const neededScaleY = (cssH*(1-pad*2)) / (maxY-minY);
     scale = Math.min(neededScaleX, neededScaleY);
     center.x = (minX+maxX)/2;
     center.y = (minY+maxY)/2;
     render();
   }
 
-  // merk: y-akse i skjerm går nedover, derfor minus
+  // skjerm <-> mercator
   const worldToScreen = (mx,my)=>{
-    const cx = canvas.width/2, cy = canvas.height/2;
-    return { x: (mx - center.x)*scale + cx, y: (center.y - my)*scale + cy };
+    return {
+      x: (mx - center.x)*scale + cssW/2,
+      y: (center.y - my)*scale + cssH/2
+    };
   };
 
-  function resize(){
-    const dpr = window.devicePixelRatio || 1;
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = Math.round(rect.width * dpr);
-    canvas.height= Math.round(rect.height* dpr);
-    ctx.setTransform(dpr,0,0,dpr,0,0); // gjør tegning skarp
-    render();
+  // --------- OSM tiles ----------
+  const tileCache = new Map(); // key: `${z}/${x}/${y}` -> HTMLImageElement
+  function tileUrl(z,x,y){ return `https://tile.openstreetmap.org/${z}/${x}/${y}.png`; }
+  function getTile(z,x,y){
+    const n = 1<<z;
+    x = ((x % n) + n) % n;             // wrap x
+    if (y<0 || y>=n) return null;      // no wrap y
+    const key = `${z}/${x}/${y}`;
+    let img = tileCache.get(key);
+    if (!img){
+      img = new Image();
+      img.crossOrigin = "anonymous"; // sikre CORS for canvas
+      img.src = tileUrl(z,x,y);
+      img.onload = ()=> { /* tegn på nytt når lastet */ render(); };
+      tileCache.set(key, img);
+    }
+    return img.complete ? img : null;
+  }
+  function mercToWorldPx(mx,my,z){
+    const S = 256 * (1<<z);
+    const u = (mx + Math.PI*R) / TWO_PI_R;
+    const v = (Math.PI*R - my) / TWO_PI_R;
+    return { px: u*S, py: v*S };
+  }
+  function drawOSM(){
+    // velg passende zoom slik at 1 tile-px ~ 1 skjerm-px
+    let z = Math.round(Math.log2(scale * TWO_PI_R / 256));
+    z = Math.max(0, Math.min(19, z)); // OSM typisk 0..19
+    const S = 256 * (1<<z);
+    const mpp = TWO_PI_R / S;          // meter per world-px
+    const spw = scale * mpp;           // skjerm-px per world-px
+
+    // world-px of center:
+    const c = mercToWorldPx(center.x, center.y, z);
+
+    // world-px bounds for viewport
+    const halfW = cssW / spw / 2;
+    const halfH = cssH / spw / 2;
+    const minPx = c.px - halfW, maxPx = c.px + halfW;
+    const minPy = c.py - halfH, maxPy = c.py + halfH;
+
+    const minTx = Math.floor(minPx/256), maxTx = Math.floor(maxPx/256);
+    const minTy = Math.floor(minPy/256), maxTy = Math.floor(maxPy/256);
+
+    for (let ty=minTy; ty<=maxTy; ty++){
+      for (let tx=minTx; tx<=maxTx; tx++){
+        const img = getTile(z, tx, ty);
+        if (!img) continue;
+        const tilePx = tx*256, tilePy = ty*256;
+        const sx = (tilePx - c.px)*spw + cssW/2;
+        const sy = (tilePy - c.py)*spw + cssH/2;
+        const s = 256*spw;
+        ctx.drawImage(img, sx, sy, s, s);
+      }
+    }
   }
 
-  function render(){
+  // --------- Turkart warp ----------
+  function setTriTransform(ctx, s0,s1,s2, d0,d1,d2){
+    const a11=s1.x-s0.x, a12=s2.x-s0.x, a21=s1.y-s0.y, a22=s2.y-s0.y;
+    const det=a11*a22-a12*a21; if(Math.abs(det)<1e-12){ctx.setTransform(1,0,0,1,0,0);return;}
+    const inv11=a22/det, inv12=-a12/det, inv13=-(inv11*s0.x+inv12*s0.y);
+    const inv21=-a21/det, inv22=a11/det, inv23=-(inv21*s0.x+inv22*s0.y);
+    const b11=d1.x-d0.x, b12=d2.x-d0.x, b13=d0.x;
+    const b21=d1.y-d0.y, b22=d2.y-d0.y, b23=d0.y;
+    const A=b11*inv11+b12*inv21, B=b21*inv11+b22*inv21;
+    const C=b11*inv12+b12*inv22, D=b21*inv12+b22*inv22;
+    const E=b11*inv13+b12*inv23+b13, F=b21*inv13+b22*inv23+b23;
+    ctx.setTransform(A,B,C,D,E,F);
+  }
+  const lerp=(a,b,t)=>a+(b-a)*t;
+  const lerpPt=(p,q,t)=>({x:lerp(p.x,q.x,t), y:lerp(p.y,q.y,t)});
+  function drawTurkart(){
     if (!img.complete || !imgW) return;
-    // bakgrunn
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    ctx.fillStyle = '#eaf0f4';
-    ctx.fillRect(0,0,canvas.width,canvas.height);
-
+    ctx.save();
     ctx.globalAlpha = parseFloat(opacityInput.value||"0.95");
 
-    // projiser hjørnene til skjerm
+    // projiser hjørner (merc->screen)
     const pNW = worldToScreen(cornersM[0].x,cornersM[0].y);
     const pNE = worldToScreen(cornersM[1].x,cornersM[1].y);
     const pSE = worldToScreen(cornersM[2].x,cornersM[2].y);
     const pSW = worldToScreen(cornersM[3].x,cornersM[3].y);
-
-    // bilinear warp via triangulering GRID_ROWS x GRID_COLS
-    const lerp=(a,b,t)=>a+(b-a)*t;
-    const lerpPt=(p,q,t)=>({x:lerp(p.x,q.x,t), y:lerp(p.y,q.y,t)});
 
     for(let j=0;j<GRID_ROWS;j++){
       const v0=j/GRID_ROWS, v1=(j+1)/GRID_ROWS;
@@ -135,38 +206,37 @@
 
       for(let i=0;i<GRID_COLS;i++){
         const u0=i/GRID_COLS, u1=(i+1)/GRID_COLS;
-
         const Q00=lerpPt(L0,R0,u0), Q10=lerpPt(L0,R0,u1);
         const Q01=lerpPt(L1,R1,u0), Q11=lerpPt(L1,R1,u1);
-
         const S00={x:u0*imgW,y:v0*imgH}, S10={x:u1*imgW,y:v0*imgH};
         const S01={x:u0*imgW,y:v1*imgH}, S11={x:u1*imgW,y:v1*imgH};
 
-        // tri A
         ctx.save();
         ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q10.x,Q10.y); ctx.lineTo(Q11.x,Q11.y); ctx.closePath(); ctx.clip();
-        setTriTransform(ctx, S00,S10,S11, Q00,Q10,Q11);
-        ctx.drawImage(img,0,0);
-        ctx.restore();
+        setTriTransform(ctx, S00,S10,S11, Q00,Q10,Q11); ctx.drawImage(img,0,0); ctx.restore();
 
-        // tri B
         ctx.save();
         ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q11.x,Q11.y); ctx.lineTo(Q01.x,Q01.y); ctx.closePath(); ctx.clip();
-        setTriTransform(ctx, S00,S11,S01, Q00,Q11,Q01);
-        ctx.drawImage(img,0,0);
-        ctx.restore();
+        setTriTransform(ctx, S00,S11,S01, Q00,Q11,Q01); ctx.drawImage(img,0,0); ctx.restore();
       }
     }
+    ctx.restore();
+  }
 
-    ctx.globalAlpha = 1;
-    // oppdater også markørplassering hvis vi har posisjon
+  function render(){
+    // 1) OSM bakgrunn
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.clearRect(0,0,cssW,cssH);
+    drawOSM();
+    // 2) Turkart-bildet
+    drawTurkart();
+    // 3) Marker/nøyaktighet via DOM-posisjonering
     if (lastPos){
       const sp = worldToScreen(lastPos.mx,lastPos.my);
       marker.style.left = sp.x + 'px';
       marker.style.top  = sp.y + 'px';
       marker.hidden = false;
-
-      if (lastPos.acc){ // meter → piksler
+      if (lastPos.acc){
         const pxR = lastPos.acc * scale;
         accCircle.style.width = (pxR*2)+'px';
         accCircle.style.height= (pxR*2)+'px';
@@ -175,26 +245,6 @@
         accCircle.hidden = false;
       }
     }
-  }
-
-  function setTriTransform(ctx, s0,s1,s2, d0,d1,d2){
-    // affine transform fra kilde-triangel S -> dest-triangel D
-    const a11=s1.x-s0.x, a12=s2.x-s0.x, a21=s1.y-s0.y, a22=s2.y-s0.y;
-    const det=a11*a22-a12*a21; if (Math.abs(det)<1e-12){ ctx.setTransform(1,0,0,1,0,0); return; }
-    const inv11= a22/det, inv12=-a12/det, inv13=-(inv11*s0.x+inv12*s0.y);
-    const inv21=-a21/det, inv22= a11/det, inv23=-(inv21*s0.x+inv22*s0.y);
-
-    const b11=d1.x-d0.x, b12=d2.x-d0.x, b13=d0.x;
-    const b21=d1.y-d0.y, b22=d2.y-d0.y, b23=d0.y;
-
-    const A=b11*inv11 + b12*inv21;
-    const B=b21*inv11 + b22*inv21;
-    const C=b11*inv12 + b12*inv22;
-    const D=b21*inv12 + b22*inv22;
-    const E=b11*inv13 + b12*inv23 + b13;
-    const F=b21*inv13 + b22*inv23 + b23;
-
-    ctx.setTransform(A,B,C,D,E,F);
   }
 
   // ---- input: pan/zoom ----
@@ -206,7 +256,6 @@
   });
   canvas.addEventListener('pointermove', e=>{
     if (!isDragging) return;
-    // delta i skjermpx → delta i meter
     const dx = (e.clientX - dragStart.x)/scale;
     const dy = (e.clientY - dragStart.y)/scale;
     center.x = centerStart.x - dx;
@@ -217,14 +266,14 @@
 
   canvas.addEventListener('wheel', e=>{
     e.preventDefault();
-    const zoomFactor = Math.pow(1.0015, -e.deltaY); // smooth
-    // zoom rundt musepeker: juster center
+    const zoomFactor = Math.pow(1.0015, -e.deltaY);
     const rect = canvas.getBoundingClientRect();
     const cx = rect.width/2, cy = rect.height/2;
+    // world pos under musepeker før zoom
     const mx = (e.clientX - rect.left - cx)/scale + center.x;
     const my = center.y - (e.clientY - rect.top - cy)/scale;
     scale *= zoomFactor;
-    // ny center slik at (mx,my) holder seg under pekeren
+    // bevar museposisjon
     const nx = (e.clientX - rect.left - cx)/scale + center.x;
     const ny = center.y - (e.clientY - rect.top - cy)/scale;
     center.x += (mx - nx);
@@ -233,11 +282,7 @@
   }, {passive:false});
 
   // ---- last bildet ----
-  img.onload = ()=>{
-    imgW = img.naturalWidth; imgH = img.naturalHeight;
-    resize(); fitView();
-    setStatus('Klar');
-  };
+  img.onload = ()=>{ imgW = img.naturalWidth; imgH = img.naturalHeight; resize(); fitView(); setStatus('Klar'); };
   img.onerror = ()=> setStatus('Klarte ikke å laste Turkart.png (må ligge i samme mappe som index.html)');
   img.src = IMAGE_URL;
 
@@ -245,27 +290,19 @@
   document.getElementById('fitBtn').onclick = fitView;
   opacityInput.oninput = render;
 
-  // resize
-  const ro = new ResizeObserver(resize);
-  ro.observe(document.getElementById('map'));
-
   // ---- GPS / dråpe ----
-  let watchId=null;
-  let lastPos=null; // {mx,my,acc}
-
+  let watchId=null, lastPos=null;
+  function mercFromLL(lat,lng){ const m=mercXY(lat,lng); return {mx:m.x,my:m.y}; }
   function updateMarker(lat,lng,acc){
-    const m = mercXY(lat,lng);
-    lastPos = { mx:m.x, my:m.y, acc:(typeof acc==='number'? acc : 0) };
+    lastPos = Object.assign(mercFromLL(lat,lng), {acc: typeof acc==='number'?acc:0});
     render();
   }
-
   function startWatch(mode){
     if (!navigator.geolocation){ setStatus('Geolocation ikke støttet'); return; }
     stopWatch();
     const opts = (mode==='precise')
       ? { enableHighAccuracy:true,  timeout:30000, maximumAge:0 }
       : { enableHighAccuracy:false, timeout:20000, maximumAge:60000 };
-
     marker.hidden = false; accCircle.hidden = false;
     setStatus(`Sporer (${mode==='precise'?'presis':'rask'})…`);
     watchId = navigator.geolocation.watchPosition(
@@ -284,18 +321,14 @@
     if (watchId!=null){ navigator.geolocation.clearWatch(watchId); watchId=null; }
     setStatus('Sporing stoppet');
   }
-
   document.getElementById('startFast').onclick = ()=> startWatch('fast');
   document.getElementById('startPrecise').onclick = ()=> startWatch('precise');
   document.getElementById('stopWatch').onclick = ()=> stopWatch();
-
   document.getElementById('testBtn').onclick = ()=>{
     const lat=59.464434, lng=10.779567;
     updateMarker(lat,lng,0);
     setStatus(`Test-dråpe: ${lat.toFixed(6)}, ${lng.toFixed(6)}`);
   };
-
-  // Start uten sporing; trykk "Start rask/presis" når siden er lastet
 })();
 </script>
 </body>
