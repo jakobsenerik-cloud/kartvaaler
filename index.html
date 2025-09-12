@@ -6,16 +6,16 @@
   <title>nykart – fri forvrengning (Leaflet.DistortableImage)</title>
 
   <!-- Leaflet -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <!-- Leaflet.Toolbar (kreves av DistortableImage) -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet-toolbar@0.4.0-alpha.2/dist/leaflet.toolbar.css" />
-  <script src="https://unpkg.com/leaflet-toolbar@0.4.0-alpha.2/dist/leaflet.toolbar.js"></script>
+  <!-- Leaflet.Toolbar (må lastes før DistortableImage) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-toolbar@0.4.0-alpha.2/dist/leaflet.toolbar.css">
+  <script src="https://cdn.jsdelivr.net/npm/leaflet-toolbar@0.4.0-alpha.2/dist/leaflet.toolbar.js"></script>
 
-  <!-- Leaflet.DistortableImage -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet-distortableimage@0.21.9/dist/leaflet.distortableimage.css" />
-  <script src="https://unpkg.com/leaflet-distortableimage@0.21.9/dist/leaflet.distortableimage.js"></script>
+  <!-- Leaflet.DistortableImage (riktig pakke-navn + sti) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-distortableimage@0.21.9/dist/leaflet.distortableimage.css">
+  <script src="https://cdn.jsdelivr.net/npm/leaflet-distortableimage@0.21.9/dist/leaflet.distortableimage.js"></script>
 
   <style>
     html,body{margin:0;height:100%} #map{height:100vh;width:100%}
@@ -26,6 +26,7 @@
     button{padding:6px 10px;border:1px solid #ccc;border-radius:8px;background:#fff;cursor:pointer}
     .small{font-size:12px;color:#444}
     .mono{font:12px/1.35 ui-monospace,Consolas,Menlo,monospace;white-space:break-spaces}
+    .err{color:#b00020}
   </style>
 </head>
 <body>
@@ -43,25 +44,31 @@
   <div id="map"></div>
 
   <script>
-    // ------- Konfig -------
-    const IMAGE_URL = "Turkart.png";
-    const WORLD_CANDIDATES = ["Turkart.pgw","Turkart.tfw","Turkart.jgw"]; // valgfritt, brukes for startplassering
+    // ---------- Konfig ----------
+    const IMAGE_URL = "Turkart.png?v=" + Date.now();
+    const WORLD_CANDIDATES = ["Turkart.pgw","Turkart.tfw","Turkart.jgw"];
 
     const $ = id => document.getElementById(id);
-    const status = msg => $('status').textContent = msg;
+    const status = msg => $('status').innerHTML = msg;
 
-    // Sjekk at plugin er lastet (riktig API er fabrikkfunksjonen, ikke "new")
-    if (typeof L === 'undefined' || typeof L.distortableImageOverlay !== 'function') {
-      status("Fant ikke Leaflet.DistortableImage – sjekk at CDN-lenkene er lastet uten å bli blokkert.");
-      console.error("Leaflet.DistortableImage mangler (L.distortableImageOverlay er ikke definert).");
+    // Sanity-check: er plugin lastet?
+    function checkPlugins() {
+      const okLeaflet = !!window.L;
+      const okToolbar = !!(window.L && (L.Toolbar || L.Toolbar2));
+      const okDistort = !!(window.L && typeof L.distortableImageOverlay === 'function');
+
+      if (!okLeaflet) { status('<span class="err">Leaflet mangler.</span>'); return false; }
+      if (!okToolbar){ status('<span class="err">Leaflet.Toolbar mangler (cdn kan være blokkert?).</span>'); return false; }
+      if (!okDistort){ status('<span class="err">Leaflet.DistortableImage mangler – sjekk CDN-lenka og adblock.</span>'); return false; }
+      return true;
     }
 
-    // UTM32 -> WGS84 (ETRS89) for world-init
+    // UTM32 -> WGS84 (for world-init)
     function utmToLatLon(E, N, zone=32, northern=true){
-      const a=6378137.0, f=1/298.257222101, b=a*(1-f);
+      const a=6378137, f=1/298.257222101, b=a*(1-f);
       const e2=(a*a-b*b)/(a*a), ep2=(a*a-b*b)/(b*b), k0=0.9996;
       const lon0=((zone-1)*6-180+3)*Math.PI/180;
-      const x=E-500000.0, y=northern?N:N-10000000.0;
+      const x=E-500000, y=northern?N:N-10000000;
       const M=y/k0, mu=M/(a*(1-e2/4-3*e2**2/64-5*e2**3/256));
       const e1=(1-Math.sqrt(1-e2))/(1+Math.sqrt(1-e2));
       const J1=3*e1/2-27*e1**3/32, J2=21*e1**2/16-55*e1**4/32, J3=151*e1**3/96, J4=1097*e1**4/512;
@@ -75,93 +82,76 @@
     }
 
     async function loadWorldCorners() {
-      // Returner hjørner i rekkefølgen: NW, NE, SW, SE (pluginens forventede "Z"-rekkefølge)
       for (const name of WORLD_CANDIDATES) {
         try {
           const r = await fetch(name, { cache:'no-store' });
           if (!r.ok) continue;
           const t = (await r.text()).trim().split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
           if (t.length < 6) continue;
-
-          const A=+t[0], D=+t[1], B=+t[2], E=+t[3], C=+t[4], F=+t[5];
-          // World -> UTM-bounds (for hele bildeflaten)
-          const img = await new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=()=>rej(); im.src=IMAGE_URL+"?v="+Date.now(); });
-          const west  = C - A/2.0;
-          const north = F - E/2.0;            // E<0
-          const east  = west  + A*img.naturalWidth;
-          const south = north + E*img.naturalHeight;
-
+          const A=+t[0], E=+t[3], C=+t[4], F=+t[5];
+          // Bildestørrelse
+          const img = await new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=()=>rej(); im.src=IMAGE_URL; });
+          const west  = C - A/2, north = F - E/2;
+          const east  = west + A*img.naturalWidth;
+          const south = north + E*img.naturalHeight; // E<0 -> south < north
           const [nwLat,nwLng] = utmToLatLon(west, north);
           const [neLat,neLng] = utmToLatLon(east, north);
           const [swLat,swLng] = utmToLatLon(west, south);
           const [seLat,seLng] = utmToLatLon(east, south);
-
+          // NB: init-rekkefølge skal være NW, NE, SW, SE (Z-mønster). :contentReference[oaicite:0]{index=0}
           return { ok:true, name, corners: [
             L.latLng(nwLat, nwLng),
             L.latLng(neLat, neLng),
             L.latLng(swLat, swLng),
             L.latLng(seLat, seLng),
           ]};
-        } catch (e) { /* prøv neste kandidat */ }
+        } catch {}
       }
       return { ok:false };
     }
 
-    function cornersText(c) {
-      // c = overlay.getCorners() gir NW, NE, SE, SW (merk: getters gir ofte NW,NE,SE,SW, mens init krever NW,NE,SW,SE)
-      // Vi skriver ut i NW, NE, SE, SW for tydelighet:
-      return `NW: [${c[0].lat}, ${c[0].lng}]
-NE: [${c[1].lat}, ${c[1].lng}]
-SE: [${c[2].lat}, ${c[2].lng}]
-SW: [${c[3].lat}, ${c[3].lng}]`;
-    }
-
     (async function init(){
+      if (!checkPlugins()) return;
+
       const map = L.map('map');
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19, attribution: '&copy; OpenStreetMap-bidragsytere'
       }).addTo(map);
 
-      // Startcorners fra world-fil om mulig, ellers grovt område
       let start = await loadWorldCorners();
       let corners = start.ok ? start.corners : [
         L.latLng(59.55, 10.70),
         L.latLng(59.55, 10.90),
-        L.latLng(59.45, 10.70),  // SW (rekkefølge må være NW, NE, SW, SE ved init)
+        L.latLng(59.45, 10.70), // SW (init krever NW,NE,SW,SE)
         L.latLng(59.45, 10.90),
       ];
 
-      // Viktig: riktig initiering (fabrikkfunksjon)
+      // Riktig API er fabrikkfunksjonen L.distortableImageOverlay(...) (ikke "new"). :contentReference[oaicite:1]{index=1}
       const overlay = L.distortableImageOverlay(IMAGE_URL, {
         corners,
         editable: true,
         mode: 'distort',
-        suppressToolbar: false,
-        opacity: 0.95
+        opacity: 0.95,
+        suppressToolbar: false
       }).addTo(map);
 
-      overlay.once('load', () => map.fitBounds(overlay.getBounds(), {padding:[10,10]}));
+      overlay.once('load', ()=> map.fitBounds(overlay.getBounds(), {padding:[10,10]}));
 
-      $('fitBtn').onclick = () => map.fitBounds(overlay.getBounds(), {padding:[10,10]});
-      $('resetBtn').onclick = async () => {
+      $('fitBtn').onclick = ()=> map.fitBounds(overlay.getBounds(), {padding:[10,10]});
+      $('resetBtn').onclick = async ()=>{
         const w = await loadWorldCorners();
-        if (w.ok) {
-          overlay.setCorners(w.corners); // plugin godtar NW,NE,SW,SE
-          map.fitBounds(overlay.getBounds(), {padding:[10,10]});
-          status(`Tilbakestilt fra ${w.name}.`);
-        } else {
-          status("Fant ingen world-fil å tilbakestille fra.");
-        }
+        if (w.ok){ overlay.setCorners(w.corners); map.fitBounds(overlay.getBounds(), {padding:[10,10]}); status(`Tilbakestilt fra ${w.name}.`); }
+        else { status("Fant ingen world-fil å tilbakestille fra."); }
       };
-      $('copyBtn').onclick = () => {
-        const c = overlay.getCorners(); // NW, NE, SE, SW
-        const txt = cornersText(c);
+      $('copyBtn').onclick = ()=>{
+        const c = overlay.getCorners(); // returnerer NW, NE, SE, SW
+        const txt = `NW: [${c[0].lat}, ${c[0].lng}]\nNE: [${c[1].lat}, ${c[1].lng}]\nSE: [${c[2].lat}, ${c[2].lng}]\nSW: [${c[3].lat}, ${c[3].lng}]`;
         $('out').textContent = txt;
         navigator.clipboard?.writeText(txt).then(()=>status("Hjørner kopiert.")).catch(()=>{});
       };
 
       status(start.ok ? `Startet med georeferanse fra ${start.name}. Klikk bildet og dra hjørnene.` : "Ingen world-fil funnet – dra hjørnene til riktig posisjon.");
-    })().catch(err => { status(err.message); console.error(err); });
+    })();
   </script>
 </body>
 </html>
