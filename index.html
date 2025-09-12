@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Kartbilde – fri forvrengning + robust GPS</title>
+<title>Kartbilde – fri forvrengning + GPS (fikset dråpe)</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
   html,body{margin:0;height:100%}
@@ -14,7 +14,8 @@
   .small{font-size:12px;color:#444}
   input[type=range]{width:140px}
   button{padding:6px 10px;border:1px solid #ccc;border-radius:8px;background:#fff;cursor:pointer}
-  .warn{color:#b00020}
+  /* Sørg for at markør-pane alltid ligger over warp-canvas */
+  .leaflet-marker-pane{ z-index: 1000 !important; }
 </style>
 </head>
 <body>
@@ -25,13 +26,14 @@
     <button id="preciseBtn">Presis posisjon</button>
     <label class="small"><input id="watchToggle" type="checkbox" checked> Følg posisjon</label>
     <label class="small"><input id="manualToggle" type="checkbox"> Manuell posisjon (klikk i kartet)</label>
+    <button id="setManualBtn">Sett posisjon: 59.464434, 10.779567</button>
     <span id="status" class="small">Laster…</span>
   </div>
   <div id="map"></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    // ---- Konfig: hjørnene dine (WGS84) i rekkefølge NW, NE, SE, SW ----
+    // ---- Konfig (hjørnene dine) ----
     const IMAGE_URL = "Turkart.png?v=" + Date.now();
     const CORNERS = [
       [59.54593535667747, 10.765142440795898],  // NW
@@ -39,9 +41,8 @@
       [59.380786150970934, 11.190948486328127], // SE
       [59.387167906588274, 10.756945610046387]  // SW
     ];
-    const GRID_COLS = 24, GRID_ROWS = 24; // warp-oppløsning
+    const GRID_COLS = 24, GRID_ROWS = 24;
 
-    // ---- Kart ----
     const map = L.map('map');
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
       maxZoom:19, attribution:'&copy; OpenStreetMap-bidragsytere'
@@ -51,7 +52,11 @@
     const opacityInput = document.getElementById('opacity');
     const statusEl = document.getElementById('status');
 
-    // ---- Last bilde og tegn (fri-forvrengning via canvas) ----
+    // --- Egen pane for warp-canvas (under markører) ---
+    const warpPane = map.createPane('warpPane');
+    warpPane.style.zIndex = 450; // tiles(200) < warp(450) < markers(1000)
+
+    // ---- Last bilde og tegn (warp) ----
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = initWarp;
@@ -62,8 +67,7 @@
       const imgW = img.naturalWidth, imgH = img.naturalHeight;
       const cornersLL = CORNERS.map(([lat,lng]) => L.latLng(lat,lng));
 
-      const pane = map.getPanes().overlayPane;
-      const canvas = L.DomUtil.create('canvas','',pane);
+      const canvas = L.DomUtil.create('canvas','',warpPane);
       const ctx = canvas.getContext('2d');
 
       function setCanvasSize(){
@@ -78,22 +82,18 @@
         return { x: p.x - tl.x, y: p.y - tl.y };
       }
       function setTriTransform(ctx, s0,s1,s2, d0,d1,d2){
-        const a11 = s1.x - s0.x, a12 = s2.x - s0.x;
-        const a21 = s1.y - s0.y, a22 = s2.y - s0.y;
-        const det = a11*a22 - a12*a21; if (Math.abs(det)<1e-12){ ctx.setTransform(1,0,0,1,0,0); return; }
-        const inv11 =  a22/det, inv12 = -a12/det, inv13 = -(inv11*s0.x + inv12*s0.y);
-        const inv21 = -a21/det, inv22 =  a11/det, inv23 = -(inv21*s0.x + inv22*s0.y);
-        const b11 = d1.x - d0.x, b12 = d2.x - d0.x, b13 = d0.x;
-        const b21 = d1.y - d0.y, b22 = d2.y - d0.y, b23 = d0.y;
-        const a = b11*inv11 + b12*inv21;
-        const b = b21*inv11 + b22*inv21;
-        const c = b11*inv12 + b12*inv22;
-        const d = b21*inv12 + b22*inv22;
-        const e = b11*inv13 + b12*inv23 + b13;
-        const f = b21*inv13 + b22*inv23 + b23;
+        const a11=s1.x-s0.x, a12=s2.x-s0.x, a21=s1.y-s0.y, a22=s2.y-s0.y;
+        const det=a11*a22-a12*a21; if(Math.abs(det)<1e-12){ctx.setTransform(1,0,0,1,0,0);return;}
+        const inv11=a22/det, inv12=-a12/det, inv13=-(inv11*s0.x+inv12*s0.y);
+        const inv21=-a21/det, inv22=a11/det, inv23=-(inv21*s0.x+inv22*s0.y);
+        const b11=d1.x-d0.x, b12=d2.x-d0.x, b13=d0.x;
+        const b21=d1.y-d0.y, b22=d2.y-d0.y, b23=d0.y;
+        const a=b11*inv11+b12*inv21, b=b21*inv11+b22*inv21;
+        const c=b11*inv12+b12*inv22, d=b21*inv12+b22*inv22;
+        const e=b11*inv13+b12*inv23+b13, f=b21*inv13+b22*inv23+b23;
         ctx.setTransform(a,b,c,d,e,f);
       }
-      function lerp(a,b,t){ return a + (b-a)*t; }
+      function lerp(a,b,t){ return a+(b-a)*t; }
       function lerpPt(p,q,t){ return {x: lerp(p.x,q.x,t), y: lerp(p.y,q.y,t)}; }
 
       function render(){
@@ -106,12 +106,12 @@
         const pSE = llToCanvas(cornersLL[2]);
         const pSW = llToCanvas(cornersLL[3]);
 
-        for (let j=0;j<GRID_ROWS;j++){
+        for(let j=0;j<GRID_ROWS;j++){
           const v0=j/GRID_ROWS, v1=(j+1)/GRID_ROWS;
           const L0=lerpPt(pNW,pSW,v0), R0=lerpPt(pNE,pSE,v0);
           const L1=lerpPt(pNW,pSW,v1), R1=lerpPt(pNE,pSE,v1);
 
-          for (let i=0;i<GRID_COLS;i++){
+          for(let i=0;i<GRID_COLS;i++){
             const u0=i/GRID_COLS, u1=(i+1)/GRID_COLS;
 
             const Q00=lerpPt(L0,R0,u0), Q10=lerpPt(L0,R0,u1);
@@ -131,7 +131,7 @@
         }
       }
 
-      const throttled = (()=>{let raf=null;return()=>{if(raf)return;raf=requestAnimationFrame(()=>{raf=null;render();});};})();
+      const throttled=(()=>{let raf=null;return()=>{if(raf)return;raf=requestAnimationFrame(()=>{raf=null;render();});};})();
       map.on('move zoom resize', throttled);
       opacityInput.addEventListener('input', throttled);
 
@@ -142,7 +142,7 @@
       statusEl.textContent = "Klar";
     }
 
-    // ---- GPS: robust oppsett ----
+    // ---- GPS / Manuell posisjon ----
     const dropIcon = L.divIcon({
       className: 'gps-drop',
       html: `<svg width="28" height="28" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg">
@@ -156,51 +156,40 @@
     const watchToggle = document.getElementById('watchToggle');
     const manualToggle = document.getElementById('manualToggle');
 
+    // Egen pane for nøyaktighetssirkel, like under markører
+    const gpsPane = map.createPane('gpsPane');
+    gpsPane.style.zIndex = 550;
+
     const GEO_FAST   = { enableHighAccuracy:false, timeout:15000, maximumAge:60000 };
     const GEO_PRECISE= { enableHighAccuracy:true,  timeout:30000, maximumAge:0 };
 
     function setStatus(msg){ statusEl.innerHTML = msg; }
 
-    async function showPermissionHint(){
-      try{
-        if (!navigator.permissions) return;
-        const s = await navigator.permissions.query({name:'geolocation'});
-        if (s.state === 'denied') {
-          setStatus('<span class="warn">Posisjon blokkert: Klikk hengelåsen i adressefeltet → Nettstedsinnstillinger → Posisjon: Tillat</span>');
-        } else if (s.state === 'prompt') {
-          setStatus('Tillat posisjon når nettleseren spør.');
-        }
-      }catch{}
-    }
-
     function updateMarker(ll, accuracy){
       if (!userMarker) userMarker = L.marker(ll, {icon: dropIcon}).addTo(map);
       else userMarker.setLatLng(ll);
-      if (!accuracyCircle) accuracyCircle = L.circle(ll, {radius: accuracy||0, color:'#2563eb', weight:1, fillOpacity:0.05}).addTo(map);
+      if (!accuracyCircle) accuracyCircle = L.circle(ll, {pane:'gpsPane', radius: accuracy||0, color:'#2563eb', weight:1, fillOpacity:0.05}).addTo(map);
       else { accuracyCircle.setLatLng(ll); if (accuracy!=null) accuracyCircle.setRadius(accuracy); }
-      if (watchToggle.checked) map.setView(ll);
+      // ALLTID panorere ved manuell/oppdatert posisjon – så dråpen er synlig
+      map.setView(ll);
     }
 
     function onLocationFound(e){
       const {lat,lng,accuracy} = e;
       updateMarker([lat,lng], accuracy);
+      if (watchToggle.checked) map.setView([lat,lng]);
       setStatus(`Posisjon: ${lat.toFixed(6)}, ${lng.toFixed(6)} (±${Math.round(accuracy)} m)`);
     }
     function onLocationError(e){
-      setStatus('<span class="warn">GPS-feil: ' + e.message + '</span>');
-      showPermissionHint();
+      setStatus('<span class="small" style="color:#b00020">GPS-feil: ' + e.message + '</span>');
     }
 
     function locateOnce(opts){ map.locate(Object.assign({ setView:false, watch:false }, opts)); }
     let watchActive = false;
-    function startWatch(opts){
-      map.stopLocate();
-      map.locate(Object.assign({ setView:false, watch:true }, opts));
-      watchActive = true;
-    }
+    function startWatch(opts){ map.stopLocate(); map.locate(Object.assign({ setView:false, watch:true }, opts)); watchActive = true; }
     function stopWatch(){ map.stopLocate(); watchActive = false; }
 
-    // Håndter manuell posisjon
+    // Klikk i kartet = manuell posisjon (panorer alltid)
     map.on('click', (e)=>{
       if (!manualToggle.checked) return;
       updateMarker(e.latlng, 0);
@@ -208,14 +197,20 @@
     });
 
     // Knapper
-    document.getElementById('fastBtn').onclick = ()=> { stopWatch(); locateOnce(GEO_FAST); if (watchToggle.checked) startWatch(GEO_FAST); };
-    document.getElementById('preciseBtn').onclick = ()=> { stopWatch(); locateOnce(GEO_PRECISE); if (watchToggle.checked) startWatch(GEO_PRECISE); };
-    watchToggle.onchange = (e)=> { if (e.target.checked && !watchActive) startWatch(GEO_FAST); else if (!e.target.checked) stopWatch(); };
+    document.getElementById('fastBtn').onclick    = ()=>{ stopWatch(); locateOnce(GEO_FAST);    if (watchToggle.checked) startWatch(GEO_FAST); };
+    document.getElementById('preciseBtn').onclick = ()=>{ stopWatch(); locateOnce(GEO_PRECISE); if (watchToggle.checked) startWatch(GEO_PRECISE); };
+    watchToggle.onchange = (e)=>{ if (e.target.checked && !watchActive) startWatch(GEO_FAST); else if (!e.target.checked) stopWatch(); };
 
-    // Start med "rask posisjon" (ofte minst problemer)
+    // Sett direkte til koordinatene du oppga
+    document.getElementById('setManualBtn').onclick = ()=>{
+      const ll = L.latLng(59.464434, 10.779567);
+      updateMarker(ll, 0);
+      setStatus(`Manuell posisjon: ${ll.lat.toFixed(6)}, ${ll.lng.toFixed(6)}`);
+    };
+
+    // Start “rask” først
     locateOnce(GEO_FAST);
     if (watchToggle.checked) startWatch(GEO_FAST);
-    showPermissionHint();
   </script>
 </body>
 </html>
