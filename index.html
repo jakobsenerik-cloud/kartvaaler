@@ -25,7 +25,8 @@
   .poi-marker.editable{cursor:grab}
   .poi-marker.dragging{cursor:grabbing}
   .poi-marker svg{display:block}
-  .poi-marker .lbl{position:absolute; left:14px; top:-2px; padding:2px 6px; background:rgba(255,255,255,.95); border:1px solid #e5e7eb; border-radius:6px; font-size:12px; white-space:nowrap}
+  .poi-marker .lbl{position:absolute; left:14px; top:-2px; padding:2px 6px; background:rgba(255,255,255,.95); border:1px solid #e5e7eb; border-radius:6px; font-size:12px; white-space:nowrap; opacity:0; visibility:hidden; transform:translateX(6px); transition:opacity .15s ease, transform .15s ease;}
+  .poi-marker:hover .lbl, .poi-marker:focus-within .lbl, .poi-marker.dragging .lbl{opacity:1; visibility:visible; transform:translateX(0);}
   /* POI-popup/editor */
   #poiPopup{position:absolute; z-index:6; max-width:320px; background:#fff; border:1px solid #e5e7eb; border-radius:10px; box-shadow:0 12px 30px rgba(0,0,0,.15); padding:10px; pointer-events:auto}
   #poiPopup h3{margin:0 0 6px;font-size:16px}
@@ -213,9 +214,17 @@
 
   // ---- POI: data + rendering ----
   let POIS = [
-    { id:'p1', title:'Gapahuk', lat:59.4685, lng:10.9365, category:'turmål', desc:'Enkel gapahuk med bålplass. Fint utsiktspunkt.' },
-    { id:'p2', title:'Parkering', lat:59.4708, lng:10.9101, category:'parkering', desc:'Lite P-område (10 plasser).'},
-    { id:'p3', title:'Utsiktspunkt', lat:59.4568, lng:10.9582, category:'turmål', desc:'Utsikt over vika.', link:'https://example.com/utsikt' }
+    {"id":"p1","title":"Gapahuk","lat":59.4685,"lng":10.9365,"category":"turmål","desc":"Enkel gapahuk med bålplass. Fint utsiktspunkt."},
+    {"id":"p3","title":"Utsiktspunkt","lat":59.4568,"lng":10.9582,"category":"turmål","desc":"Utsikt over vika.","link":"https://example.com/utsikt"},
+    {"id":"p1757705205324","title":"Nytt punkt","lat":59.475191699914554,"lng":10.83445462414308,"category":"","desc":"","color":"#fa2b79","link":"","image":""},
+    {"id":"p1757705352342","title":"Augerød boligfelt","lat":59.466042955055755,"lng":10.783598381158985,"category":"Interessepunkt","desc":"","color":"#fb2677","link":"","image":""},
+    {"id":"p1757705516687","title":"Augerødmosan Torvuttak","lat":59.46442060111445,"lng":10.792418909883002,"category":"Interessepunkt","desc":"","color":"#fa2977","link":"","image":""},
+    {"id":"p1757705850094","title":"Rød hyttefelt","lat":59.46039457453535,"lng":10.76963573454026,"category":"Interessepunkt","desc":"","color":"#fc2b7d","link":"","image":""},
+    {"id":"p1757705972716","title":"Jettegryte","lat":59.43676138276811,"lng":10.79490222510431,"category":"Interessepunkt","desc":"","color":"#fa2b7c","link":"","image":""},
+    {"id":"p1757706035158","title":"Sønsterød hyttefelt","lat":59.43766825805131,"lng":10.786234718342879,"category":"Interessepunkt","desc":"","color":"#fa2b7c","link":"","image":""},
+    {"id":"p1757706137384","title":"Bergeråsen bygdeborg","lat":59.45982971653824,"lng":10.806960142985895,"category":"Interessepunkt","desc":"","color":"#fa2b79","link":"https://vaaler-of.frivilligsentral.no/irisfile/161185/berg%C3%A5sen-bygdeborg-endelig-utg-180609pdf.pdf","image":""},
+    {"id":"p1757706217412","title":"Våk barneskole","lat":59.46298259975104,"lng":10.798153505553058,"category":"Interessepunkt","desc":"","color":"#f97316","link":"http://www.vaak.gs.of.no/","image":""},
+    {"id":"p1757706388440","title":"Texnes boligfelt","lat":59.45950321197825,"lng":10.792823418737889,"category":"Interessepunkt","desc":"","color":"#fb2c7a","link":"","image":""}
   ];
   fetch('pois.json', {cache:'no-store'}).then(r=>{ if(!r.ok) throw new Error('ingen'); return r.json(); }).then(json=>{ if(Array.isArray(json)) POIS = json; buildPOIMarkers(); updatePOIPositions(); loadDraftIfAny(); }).catch(()=>{ buildPOIMarkers(); updatePOIPositions(); loadDraftIfAny(); });
 
