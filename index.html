@@ -1,24 +1,27 @@
 <!DOCTYPE html>
 <html lang="no">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Kartbilde – fast fri-forvrengning</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <style>
-    html,body{margin:0;height:100%}
-    #map{height:100vh;width:100%}
-    .panel{position:absolute;z-index:1000;top:10px;left:10px;background:rgba(255,255,255,.95);
-      padding:8px 10px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);
-      font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;display:flex;gap:10px;align-items:center}
-    .small{font-size:12px;color:#444}
-    input[type=range]{width:140px}
-  </style>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Kartbilde – fri forvrengning + GPS</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+  html,body{margin:0;height:100%}
+  #map{height:100vh;width:100%}
+  .panel{position:absolute;z-index:1000;top:10px;left:10px;background:rgba(255,255,255,.95);
+    padding:8px 10px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);
+    font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .small{font-size:12px;color:#444}
+  input[type=range]{width:140px}
+  button{padding:6px 10px;border:1px solid #ccc;border-radius:8px;background:#fff;cursor:pointer}
+</style>
 </head>
 <body>
   <div class="panel">
     <button id="fitBtn">Vis kartområdet</button>
     <label class="small">Opasitet <input id="opacity" type="range" min="0" max="1" step="0.01" value="0.95"></label>
+    <button id="locateBtn">Vis/oppdater posisjon</button>
+    <label class="small"><input id="watchToggle" type="checkbox" checked> Følg posisjon</label>
     <span id="status" class="small">Laster…</span>
   </div>
   <div id="map"></div>
@@ -27,28 +30,26 @@
   <script>
     // ---- Konfig ----
     const IMAGE_URL = "Turkart.png?v=" + Date.now(); // cache-buster
-    // Dine endelige hjørner (WGS84) i rekkefølge: NW, NE, SE, SW
+    // Låste hjørner (WGS84) i rekkefølge: NW, NE, SE, SW
     const CORNERS = [
-      [59.54593535667747, 10.765142440795898], // NW
+      [59.54593535667747, 10.765142440795898],  // NW
       [59.539561484456776, 11.201162338256838], // NE
       [59.380786150970934, 11.190948486328127], // SE
       [59.387167906588274, 10.756945610046387]  // SW
     ];
-
-    // Rutenettets tetthet (økes for glattere, senkes for mer ytelse)
-    const GRID_COLS = 24, GRID_ROWS = 24;
+    const GRID_COLS = 24, GRID_ROWS = 24; // warp-oppløsning
 
     // ---- Kart ----
     const map = L.map('map');
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19, attribution: '&copy; OpenStreetMap-bidragsytere'
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+      maxZoom:19, attribution:'&copy; OpenStreetMap-bidragsytere'
     }).addTo(map);
 
     const fitBtn = document.getElementById('fitBtn');
     const opacityInput = document.getElementById('opacity');
     const statusEl = document.getElementById('status');
 
-    // ---- Laster bilde ----
+    // ---- Last bilde og tegn som fri-forvrengning via canvas ----
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = initWarp;
@@ -59,10 +60,8 @@
       statusEl.textContent = "Tegner…";
       const imgW = img.naturalWidth, imgH = img.naturalHeight;
 
-      // Hjørner som LatLng og canvas-punkter
       const cornersLL = CORNERS.map(([lat,lng]) => L.latLng(lat,lng));
 
-      // Canvas-lag i overlayPane
       const pane = map.getPanes().overlayPane;
       const canvas = L.DomUtil.create('canvas','',pane);
       const ctx = canvas.getContext('2d');
@@ -73,43 +72,29 @@
         const pos = map.containerPointToLayerPoint([0,0]);
         L.DomUtil.setPosition(canvas, pos);
       }
-
       function llToCanvas(ll){
         const p = map.latLngToLayerPoint(ll);
-        const topLeft = map.containerPointToLayerPoint([0,0]);
-        return { x: p.x - topLeft.x, y: p.y - topLeft.y };
+        const tl = map.containerPointToLayerPoint([0,0]);
+        return { x: p.x - tl.x, y: p.y - tl.y };
       }
-
-      // Affin mapping fra kilde-triangel -> dest-triangel
       function setTriTransform(ctx, s0,s1,s2, d0,d1,d2){
-        // Bygg matriser som i artikkelen "affine transform via triangles"
-        // S = [[sx1-sx0, sx2-sx0, sx0],
-        //      [sy1-sy0, sy2-sy0, sy0],
-        //      [     0 ,      0 ,  1 ]]
         const a11 = s1.x - s0.x, a12 = s2.x - s0.x;
         const a21 = s1.y - s0.y, a22 = s2.y - s0.y;
-        const det = a11*a22 - a12*a21;
-        if (Math.abs(det) < 1e-12) { ctx.setTransform(1,0,0,1,0,0); return; }
-        // inv(S)
+        const det = a11*a22 - a12*a21; if (Math.abs(det)<1e-12){ ctx.setTransform(1,0,0,1,0,0); return; }
         const inv11 =  a22/det, inv12 = -a12/det, inv13 = -(inv11*s0.x + inv12*s0.y);
         const inv21 = -a21/det, inv22 =  a11/det, inv23 = -(inv21*s0.x + inv22*s0.y);
-
-        // D = [[dx1-dx0, dx2-dx0, dx0],
-        //      [dy1-dy0, dy2-dy0, dy0],
-        //      [     0 ,      0 ,  1 ]]
         const b11 = d1.x - d0.x, b12 = d2.x - d0.x, b13 = d0.x;
         const b21 = d1.y - d0.y, b22 = d2.y - d0.y, b23 = d0.y;
-
-        // T = D * inv(S)  → 2x3 for canvas: [a c e; b d f]
         const a = b11*inv11 + b12*inv21;
         const b = b21*inv11 + b22*inv21;
         const c = b11*inv12 + b12*inv22;
         const d = b21*inv12 + b22*inv22;
         const e = b11*inv13 + b12*inv23 + b13;
         const f = b21*inv13 + b22*inv23 + b23;
-
-        ctx.setTransform(a, b, c, d, e, f);
+        ctx.setTransform(a,b,c,d,e,f);
       }
+      function lerp(a,b,t){ return a + (b-a)*t; }
+      function lerpPt(p,q,t){ return {x: lerp(p.x,q.x,t), y: lerp(p.y,q.y,t)}; }
 
       function render(){
         setCanvasSize();
@@ -121,61 +106,85 @@
         const pSE = llToCanvas(cornersLL[2]);
         const pSW = llToCanvas(cornersLL[3]);
 
-        // Bilinear warp via triangulering (GRID_ROWS x GRID_COLS celler, 2 tri pr celle)
-        function lerp(a,b,t){ return a + (b-a)*t; }
-        function lerpPt(p,q,t){ return {x: lerp(p.x,q.x,t), y: lerp(p.y,q.y,t)}; }
-
         for (let j=0;j<GRID_ROWS;j++){
-          const v0 = j/GRID_ROWS, v1 = (j+1)/GRID_ROWS;
-          const L0 = { x: lerp(pNW.x, pSW.x, v0), y: lerp(pNW.y, pSW.y, v0) };
-          const R0 = { x: lerp(pNE.x, pSE.x, v0), y: lerp(pNE.y, pSE.y, v0) };
-          const L1 = { x: lerp(pNW.x, pSW.x, v1), y: lerp(pNW.y, pSW.y, v1) };
-          const R1 = { x: lerp(pNE.x, pSE.x, v1), y: lerp(pNE.y, pSE.y, v1) };
+          const v0=j/GRID_ROWS, v1=(j+1)/GRID_ROWS;
+          const L0=lerpPt(pNW,pSW,v0), R0=lerpPt(pNE,pSE,v0);
+          const L1=lerpPt(pNW,pSW,v1), R1=lerpPt(pNE,pSE,v1);
 
           for (let i=0;i<GRID_COLS;i++){
-            const u0 = i/GRID_COLS, u1 = (i+1)/GRID_COLS;
+            const u0=i/GRID_COLS, u1=(i+1)/GRID_COLS;
 
-            const Q00 = lerpPt(L0, R0, u0);
-            const Q10 = lerpPt(L0, R0, u1);
-            const Q01 = lerpPt(L1, R1, u0);
-            const Q11 = lerpPt(L1, R1, u1);
+            const Q00=lerpPt(L0,R0,u0), Q10=lerpPt(L0,R0,u1);
+            const Q01=lerpPt(L1,R1,u0), Q11=lerpPt(L1,R1,u1);
 
-            const S00 = {x: u0*imgW, y: v0*imgH};
-            const S10 = {x: u1*imgW, y: v0*imgH};
-            const S01 = {x: u0*imgW, y: v1*imgH};
-            const S11 = {x: u1*imgW, y: v1*imgH};
+            const S00={x:u0*imgW,y:v0*imgH}, S10={x:u1*imgW,y:v0*imgH};
+            const S01={x:u0*imgW,y:v1*imgH}, S11={x:u1*imgW,y:v1*imgH};
 
-            // tri A: (Q00,Q10,Q11) ← (S00,S10,S11)
             ctx.save();
-            ctx.beginPath();
-            ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q10.x,Q10.y); ctx.lineTo(Q11.x,Q11.y); ctx.closePath(); ctx.clip();
-            setTriTransform(ctx, S00,S10,S11, Q00,Q10,Q11);
-            ctx.drawImage(img, 0, 0);
-            ctx.restore();
+            ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q10.x,Q10.y); ctx.lineTo(Q11.x,Q11.y); ctx.closePath(); ctx.clip();
+            setTriTransform(ctx, S00,S10,S11, Q00,Q10,Q11); ctx.drawImage(img,0,0); ctx.restore();
 
-            // tri B: (Q00,Q11,Q01) ← (S00,S11,S01)
             ctx.save();
-            ctx.beginPath();
-            ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q11.x,Q11.y); ctx.lineTo(Q01.x,Q01.y); ctx.closePath(); ctx.clip();
-            setTriTransform(ctx, S00,S11,S01, Q00,Q11,Q01);
-            ctx.drawImage(img, 0, 0);
-            ctx.restore();
+            ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q11.x,Q11.y); ctx.lineTo(Q01.x,Q01.y); ctx.closePath(); ctx.clip();
+            setTriTransform(ctx, S00,S11,S01, Q00,Q11,Q01); ctx.drawImage(img,0,0); ctx.restore();
           }
         }
       }
 
-      // Tegn ved zoom/pan/resize
-      const throttled = (()=>{ let raf=null; return ()=>{ if(raf) return; raf=requestAnimationFrame(()=>{ raf=null; render(); }); };})();
+      const throttled = (()=>{let raf=null;return()=>{if(raf)return;raf=requestAnimationFrame(()=>{raf=null;render();});};})();
       map.on('move zoom resize', throttled);
       opacityInput.addEventListener('input', throttled);
 
-      // Fit & første tegning
       const bbox = L.latLngBounds(cornersLL);
-      document.getElementById('fitBtn').onclick = ()=> map.fitBounds(bbox, {padding:[10,10]});
-      map.fitBounds(bbox, {padding:[10,10]});
+      document.getElementById('fitBtn').onclick = ()=> map.fitBounds(bbox,{padding:[10,10]});
+      map.fitBounds(bbox,{padding:[10,10]});
       render();
       statusEl.textContent = "Klar";
     }
+
+    // ---- GPS-dråpe ----
+    const dropIcon = L.divIcon({
+      className: 'gps-drop',
+      html: `<svg width="28" height="28" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg">
+               <path d="M14 1 C8 1 4 5.5 4 10.5 c0 6.5 8 13 10 16 2-3 10-9.5 10-16 C24 5.5 20 1 14 1z" fill="#2563eb" stroke="white" stroke-width="2"/>
+               <circle cx="14" cy="11" r="4" fill="white"/>
+             </svg>`,
+      iconSize:[28,28], iconAnchor:[14,26]
+    });
+
+    let userMarker=null, accuracyCircle=null;
+
+    function setStatus(msg){ statusEl.textContent = msg; }
+
+    function onLocationFound(e){
+      const {lat,lng,accuracy} = e;
+      const ll = [lat,lng];
+      if (!userMarker) userMarker = L.marker(ll, {icon: dropIcon}).addTo(map);
+      else userMarker.setLatLng(ll);
+      if (!accuracyCircle) accuracyCircle = L.circle(ll, {radius: accuracy, color:'#2563eb', weight:1, fillOpacity:0.05}).addTo(map);
+      else { accuracyCircle.setLatLng(ll); accuracyCircle.setRadius(accuracy); }
+
+      if (document.getElementById('watchToggle').checked) map.setView(ll);
+      setStatus(`Posisjon: ${lat.toFixed(6)}, ${lng.toFixed(6)} (±${Math.round(accuracy)} m)`);
+    }
+    function onLocationError(e){ setStatus('GPS-feil: ' + e.message); }
+
+    function locateOnce(){ map.locate({setView:false, watch:false, enableHighAccuracy:true}); }
+    function startWatch(){ map.locate({setView:false, watch:true, enableHighAccuracy:true}); }
+    function stopWatch(){ map.stopLocate(); }
+
+    map.on('locationfound', onLocationFound);
+    map.on('locationerror', onLocationError);
+
+    document.getElementById('locateBtn').addEventListener('click', ()=>{
+      if (document.getElementById('watchToggle').checked) startWatch(); else { stopWatch(); locateOnce(); }
+    });
+    document.getElementById('watchToggle').addEventListener('change', e=>{
+      if (e.target.checked) startWatch(); else stopWatch();
+    });
+
+    // start automatisk
+    startWatch();
   </script>
 </body>
 </html>
