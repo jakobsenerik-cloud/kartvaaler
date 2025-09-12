@@ -318,7 +318,24 @@
     .catch(()=>{ buildPOIMarkers(); updatePOIPositions(); loadDraftIfAny(); });
 
   const poiElems = new Map(); // id -> DOM element
-  function colorForCategory(cat){ return cat==='parkering' ? '#0ea5e9' : cat==='turmål' ? '#22c55e' : '#f97316'; }
+  function colorForCategory(cat){
+    const key = (cat||'').toString().toLowerCase();
+    const map = {
+      'parkering':'#0ea5e9',
+      'badeplass':'#06b6d4',
+      'utsiktspunkt':'#8b5cf6',
+      'husmannsplass':'#92400e',
+      'båtslipp':'#0284c7',
+      'matbutikk':'#22c55e',
+      'bensinstasjon':'#ef4444',
+      'aktivitet':'#f97316',
+      'kulturminne':'#b91c1c',
+      'interessepunkt':'#14b8a6',
+      // alias / gamle kategorier
+      'turmål':'#22c55e'
+    };
+    return map[key] || '#6b7280';
+  }
   function colorForPOI(p){ return p.color || colorForCategory(p.category||'poi'); }
   function iconForPOI(p){ const color = colorForPOI(p); return `<svg width="24" height="24" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><path d=\"M14 1 C8 1 4 5.5 4 10.5 c0 6.5 8 13 10 16 2-3 10-9.5 10-16 C24 5.5 20 1 14 1z\" fill=\"${color}\" stroke=\"white\" stroke-width=\"2\"/><circle cx=\"14\" cy=\"11\" r=\"3.5\" fill=\"white\"/></svg>`; }
 
@@ -347,7 +364,7 @@
 
   function openPOIPopup(p, screenPt){ const parts = []; parts.push(`<h3>${escapeHtml(p.title||'Punkt')}</h3>`); if (p.image) parts.push(`<img src="${encodeURI(p.image)}" alt="">`); if (p.desc) parts.push(`<p>${escapeHtml(p.desc)}</p>`); const meta = [`Kategori: ${escapeHtml(p.category||'—')}`, `Lat/Lng: ${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`]; if (p.link) meta.push(`<a href="${escapeURITrusted(p.link)}" target="_blank" rel="noopener">Mer info ↗</a>`); parts.push(`<div class="meta">${meta.join(' · ')}</div>`); if (editMode) parts.push(`<div class="actions"><button id="popupEdit">Rediger</button><button id="popupDelete" class="danger">Slett</button></div>`); poiContent.innerHTML = parts.join(''); poiPopup.hidden = false; positionPopupNear(screenPt); if (editMode){ poiContent.querySelector('#popupEdit').onclick=()=> openPOIEditor(p, screenPt); poiContent.querySelector('#popupDelete').onclick=()=> deletePOI(p); } }
 
-  function openPOIEditor(p, screenPt){ const cats = ['turmål','parkering','vann','annen']; const colorVal = colorForPOI(p); poiContent.innerHTML = `
+  function openPOIEditor(p, screenPt){ const cats = ['Parkering','Badeplass','Utsiktspunkt','Husmannsplass','Båtslipp','Matbutikk','Bensinstasjon','Aktivitet','Kulturminne','Interessepunkt']; const colorVal = colorForPOI(p); poiContent.innerHTML = `
     <h3>Rediger punkt</h3>
     <div class="row"><label>Tittel<br><input id="e_title" type="text" value="${escapeAttr(p.title||'')}"></label></div>
     <div class="row"><label>Kategori<br><input id="e_category" list="catlist" type="text" value="${escapeAttr(p.category||'')}"></label></div>
