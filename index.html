@@ -111,6 +111,8 @@
   // Globale for aktiv sti/tegning – må være definert FØR render kalles
   let activePathPoiId = null;
   let drawPathForId = null;
+  // GPS state må defineres før første render
+  let watchId = null, lastPos = null;
   const VERSION = 'v-debug ' + new Date().toISOString().slice(0,16).replace('T',' ');
   document.getElementById('ver').textContent = VERSION;
 
@@ -205,7 +207,7 @@
   initNow();
 
   // ---- GPS ----
-  let watchId=null,lastPos=null; const GPS_COLOR_DEFAULT='#2563eb';
+  // (watchId/lastPos er definert tidligere for å unngå TDZ-feil) const GPS_COLOR_DEFAULT='#2563eb';
   function hexToRgb(hex){ hex=hex.replace('#',''); if(hex.length===3) hex=hex.split('').map(c=>c+c).join(''); const num=parseInt(hex,16); return {r:(num>>16)&255,g:(num>>8)&255,b:num&255}; }
   function setGpsColor(hex){ gpsDropPath.setAttribute('fill', hex); const {r,g,b}=hexToRgb(hex); accCircle.style.borderColor=`rgba(${r},${g},${b},0.65)`; accCircle.style.background=`rgba(${r},${g},${b},0.10)`; }
   gpsColorInput.addEventListener('input', ()=> setGpsColor(gpsColorInput.value||GPS_COLOR_DEFAULT)); setGpsColor(gpsColorInput.value||GPS_COLOR_DEFAULT);
