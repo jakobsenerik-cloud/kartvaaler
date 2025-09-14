@@ -3,17 +3,19 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>Kartvaaler – OSM + kartbilde + GPS + POI (kompakt)</title>
+<title>Kartvaaler – OSM + kartbilde + GPS + POI (mobilfix v3)</title>
 <style>
-  html,body{margin:0;height:100%;overflow:hidden;background:#eaf0f4}
-  #ui{position:fixed;z-index:10;top:10px;left:10px;background:rgba(255,255,255,.95);padding:8px 10px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  html,body{margin:0;height:100%;overflow:hidden;background:#eaf0f4;overscroll-behavior:none}
+  #ui{position:fixed;z-index:10000;top:10px;left:10px;background:rgba(255,255,255,.95);padding:8px 10px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   #ui input[type=search]{padding:6px 8px;border:1px solid #d0d7de;border-radius:8px;width:170px}
   #status{font-size:12px;color:#444}
   #ver{font-size:12px;color:#0f172a;background:#e2e8f0;border-radius:6px;padding:2px 6px}
   input[type=range]{width:120px}
   button{padding:6px 10px;border:1px solid #ccc;border-radius:8px;background:#fff;cursor:pointer}
-  #map{position:fixed;inset:0}
+  #map{position:fixed;inset:0;touch-action:none}
   #canvas{position:absolute;left:0;top:0;width:100%;height:100%;touch-action:none}
+  /* fang også på overlay-lag for å sikre pinch */
+  #poiLayer,.poi-marker{touch-action:none}
   /* GPS-markør */
   #marker{position:absolute; z-index:4; width:28px; height:28px; transform:translate(-14px,-26px); pointer-events:none}
   #marker svg{display:block}
@@ -97,6 +99,9 @@
 (function(){
   // ---- konfig ----
   const IMAGE_URL = "Turkart.png?v=" + Date.now(); // cache-buster
+  const VERSION = 'v3-mobilfix ' + new Date().toISOString().slice(0,16).replace('T',' ');
+  document.getElementById('ver').textContent = VERSION;
+
   // Hjørner (WGS84) i rekkefølge: NW, NE, SE, SW
   const CORNERS = [
     [59.54593535667747, 10.765142440795898],
@@ -105,19 +110,16 @@
     [59.387167906588274, 10.756945610046387]
   ];
   const MIN_SCALE = 0.01, MAX_SCALE = 8000;
-  const GRID_FINE = {cols:24, rows:24}, GRID_FAST = {cols:5, rows:5};
+  const GRID_FINE = {cols:24, rows:24}, GRID_FAST = {cols:2, rows:2};
   const REFINE_DELAY = 220; // ms
   const LABEL_MIN_ZOOM = 14; // under dette vises ikke etiketter
-  // Globale for aktiv sti/tegning – må være definert FØR render kalles
-  let activePathPoiId = null;
-  let drawPathForId = null;
-  // GPS state må defineres før første render
-  let watchId = null, lastPos = null;
-  // POI data må også eksistere før første render/build
+
+  // Globale som må finnes før første render
+  let activePathPoiId = null; // for sti/highlight
+  let drawPathForId = null;   // id under tegning
+  let watchId = null, lastPos = null; // GPS
   let POIS = [];
   const poiElems = new Map();
-  const VERSION = 'v-debug ' + new Date().toISOString().slice(0,16).replace('T',' ');
-  document.getElementById('ver').textContent = VERSION;
 
   const R = 6378137, TWO_PI_R = 2*Math.PI*R;
   const toRad = d => d*Math.PI/180;
@@ -168,7 +170,7 @@
   function updateLabelVisibility(){ const z = currentZoom(); poiLayer.classList.toggle('no-labels', z < LABEL_MIN_ZOOM); }
 
   // ---- render scheduling ----
-  let rafId=null, refineTimer=null, isInteracting=false; let currentGrid = GRID_FINE;
+  let rafId=null, refineTimer=null, isInteracting=false, lastFrame=0; let currentGrid = GRID_FINE;
   function requestRender(){ if (rafId) return; rafId = requestAnimationFrame(()=>{ rafId=null; render(); }); }
   function enterFastMode(){ currentGrid = GRID_FAST; ctx.imageSmoothingEnabled=false; isInteracting=true; poiLayer.classList.add('suppress-labels'); }
   function scheduleRefine(){ if (refineTimer) clearTimeout(refineTimer); refineTimer=setTimeout(()=>{ currentGrid=GRID_FINE; ctx.imageSmoothingEnabled=true; isInteracting=false; poiLayer.classList.remove('suppress-labels'); requestRender(); }, REFINE_DELAY); }
@@ -180,48 +182,187 @@
 
   // ---- OSM tiles ----
   const tileCache = new Map(); let tileOk=0, tileFail=0; const tileUrl=(z,x,y)=>`https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
-  function getTile(z,x,y){ const n=1<<z; x=((x%n)+n)%n; if (y<0||y>=n) return null; const key=`${z}/${x}/${y}`; let im=tileCache.get(key); if(!im){ im=new Image(); im.src=tileUrl(z,x,y); im.onload=()=>{ tileOk++; requestRender(); }; im.onerror=()=>{ tileFail++; if (tileFail===8) setStatus('Klarte ikke å laste OSM-fliser – nett/blokkert?'); }; tileCache.set(key,im);} return im.complete?im:null; }
+  function getTile(z,x,y){ const n=1<<z; x=((x%n)+n)%n; if (y<0||y>=n) return null; const key=`${z}/${x}/${y}`; let im=tileCache.get(key); if(!im){ im=new Image(); im.decoding='async'; im.loading='lazy'; im.src=tileUrl(z,x,y); im.onload=()=>{ tileOk++; requestRender(); }; im.onerror=()=>{ tileFail++; if (tileFail===8) setStatus('Klarte ikke å laste OSM-fliser – nett/blokkert?'); }; tileCache.set(key,im);} return im.complete?im:null; }
   function mercToWorldPx(mx,my,z){ const S=256*(1<<z); const u=(mx+Math.PI*R)/TWO_PI_R; const v=(Math.PI*R-my)/TWO_PI_R; return {px:u*S, py:v*S}; }
   function drawOSM(){ let z=Math.round(currentZoom()); z=Math.max(0,Math.min(19,z)); const S=256*(1<<z); const mpp=TWO_PI_R/S; const spw=scale*mpp; const c=mercToWorldPx(center.x,center.y,z); const halfW=cssW/spw/2, halfH=cssH/spw/2; const minPx=c.px-halfW, maxPx=c.px+halfW; const minPy=c.py-halfH, maxPy=c.py+halfH; const minTx=Math.floor(minPx/256), maxTx=Math.floor(maxPx/256); const minTy=Math.floor(minPy/256), maxTy=Math.floor(maxPy/256);
     ctx.save(); ctx.fillStyle='#e8eef2'; ctx.fillRect(0,0,cssW,cssH); ctx.restore();
     for(let ty=minTy; ty<=maxTy; ty++) for(let tx=minTx; tx<=maxTx; tx++){ const im=getTile(z,tx,ty); if(!im) continue; const tilePx=tx*256, tilePy=ty*256; const sx=(tilePx-c.px)*spw+cssW/2, sy=(tilePy-c.py)*spw+cssH/2; const s=256*spw; ctx.drawImage(im,sx,sy,s,s);} }
 
   // ---- Turkart warp ----
-  let img=new Image(), imgW=0, imgH=0; img.onload=()=>{ imgW=img.naturalWidth; imgH=img.naturalHeight; setStatus('Klar (JS OK)'); requestRender(); }; img.onerror=()=>{ setStatus('Klarte ikke å laste Turkart.png'); requestRender(); }; img.src=IMAGE_URL;
+  let img=new Image(), imgW=0, imgH=0;
+  // Lavoppløst proxy for rask zoom/pan
+  let imgLow=null, lowW=0, lowH=0; const FAST_IMG_MAX=1024;
+  img.onload=()=>{
+    imgW=img.naturalWidth; imgH=img.naturalHeight;
+    // Lag nedskalert offscreen-lerret for fast mode
+    const maxDim = FAST_IMG_MAX;
+    const scaleDown = Math.min(1, maxDim / Math.max(imgW, imgH));
+    if (scaleDown < 1) {
+      const off = document.createElement('canvas');
+      lowW = Math.max(1, Math.round(imgW * scaleDown));
+      lowH = Math.max(1, Math.round(imgH * scaleDown));
+      off.width = lowW; off.height = lowH;
+      const octx = off.getContext('2d');
+      octx.imageSmoothingEnabled = true;
+      octx.drawImage(img, 0, 0, lowW, lowH);
+      imgLow = off; // brukes under interaksjon
+    }
+    setStatus('Klar (JS OK)');
+    requestRender();
+  };
+  img.onerror=()=>{ setStatus('Klarte ikke å laste Turkart.png'); requestRender(); };
+  img.src=IMAGE_URL;
   function setTriTransform(ctx,s0,s1,s2,d0,d1,d2){ const a11=s1.x-s0.x,a12=s2.x-s0.x,a21=s1.y-s0.y,a22=s2.y-s0.y; const det=a11*a22-a12*a21; if(Math.abs(det)<1e-12){ctx.setTransform(1,0,0,1,0,0);return;} const inv11=a22/det,inv12=-a12/det,inv13=-(inv11*s0.x+inv12*s0.y); const inv21=-a21/det,inv22=a11/det,inv23=-(inv21*s0.x+inv22*s0.y); const b11=d1.x-d0.x,b12=d2.x-d0.x,b13=d0.x; const b21=d1.y-d0.y,b22=d2.y-d0.y,b23=d0.y; const A=b11*inv11+b12*inv21,B=b21*inv11+b22*inv21; const C=b11*inv12+b12*inv22,D=b21*inv12+b22*inv22; const E=b11*inv13+b12*inv23+b13,F=b21*inv13+b22*inv23+b23; ctx.setTransform(A,B,C,D,E,F);} 
   const lerp=(a,b,t)=>a+(b-a)*t; const lerpPt=(p,q,t)=>({x:lerp(p.x,q.x,t), y:lerp(p.y,q.y,t)});
   function quadOffscreen(q0,q1,q2,q3){ const minx=Math.min(q0.x,q1.x,q2.x,q3.x), maxx=Math.max(q0.x,q1.x,q2.x,q3.x); const miny=Math.min(q0.y,q1.y,q2.y,q3.y), maxy=Math.max(q0.y,q1.y,q2.y,q3.y); return (maxx<0||maxy<0||minx>cssW||miny>cssH); }
-  function drawTurkart(){ if(!img.complete||!imgW) return; ctx.save(); ctx.globalAlpha=parseFloat(opacityInput.value||'0.95'); const [NW,NE,SE,SW]=cornersM; const pNW=worldToScreen(NW.x,NW.y), pNE=worldToScreen(NE.x,NE.y), pSE=worldToScreen(SE.x,SE.y), pSW=worldToScreen(SW.x,SW.y); const COLS=currentGrid.cols, ROWS=currentGrid.rows; for(let j=0;j<ROWS;j++){ const v0=j/ROWS,v1=(j+1)/ROWS; const L0=lerpPt(pNW,pSW,v0), R0=lerpPt(pNE,pSE,v0); const L1=lerpPt(pNW,pSW,v1), R1=lerpPt(pNE,pSE,v1); for(let i=0;i<COLS;i++){ const u0=i/COLS,u1=(i+1)/COLS; const Q00=lerpPt(L0,R0,u0), Q10=lerpPt(L0,R0,u1); const Q01=lerpPt(L1,R1,u0), Q11=lerpPt(L1,R1,u1); if(quadOffscreen(Q00,Q10,Q11,Q01)) continue; const S00={x:u0*imgW,y:v0*imgH}, S10={x:u1*imgW,y:v0*imgH}; const S01={x:u0*imgW,y:v1*imgH}, S11={x:u1*imgW,y:v1*imgH}; ctx.save(); ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q10.x,Q10.y); ctx.lineTo(Q11.x,Q11.y); ctx.closePath(); ctx.clip(); setTriTransform(ctx,S00,S10,S11,Q00,Q10,Q11); ctx.drawImage(img,0,0); ctx.restore(); ctx.save(); ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q11.x,Q11.y); ctx.lineTo(Q01.x,Q01.y); ctx.closePath(); ctx.clip(); setTriTransform(ctx,S00,S11,S01,Q00,Q11,Q01); ctx.drawImage(img,0,0); ctx.restore(); } } ctx.restore(); }
+  function drawTurkart(){
+    // Velg kildebilde (lavoppløst når vi panorerer/zoomer)
+    const useLow = isInteracting && imgLow;
+    const src = useLow ? imgLow : img;
+    const sW = useLow ? lowW : imgW;
+    const sH = useLow ? lowH : imgH;
+    if (!src || !sW || !sH) return;
+
+    ctx.save();
+    ctx.globalAlpha = parseFloat(opacityInput.value||'0.95');
+    // For ekstra fart under interaksjon kjører vi uten smoothing
+    const prevSmooth = ctx.imageSmoothingEnabled;
+    if (useLow) ctx.imageSmoothingEnabled = false;
+
+    const [NW,NE,SE,SW] = cornersM;
+    const pNW = worldToScreen(NW.x,NW.y), pNE = worldToScreen(NE.x,NE.y), pSE = worldToScreen(SE.x,SE.y), pSW = worldToScreen(SW.x,SW.y);
+    const COLS = currentGrid.cols, ROWS = currentGrid.rows;
+
+    for(let j=0;j<ROWS;j++){
+      const v0=j/ROWS, v1=(j+1)/ROWS;
+      const L0=lerpPt(pNW,pSW,v0), R0=lerpPt(pNE,pSE,v0);
+      const L1=lerpPt(pNW,pSW,v1), R1=lerpPt(pNE,pSE,v1);
+      for(let i=0;i<COLS;i++){
+        const u0=i/COLS, u1=(i+1)/COLS;
+        const Q00=lerpPt(L0,R0,u0), Q10=lerpPt(L0,R0,u1);
+        const Q01=lerpPt(L1,R1,u0), Q11=lerpPt(L1,R1,u1);
+        if (quadOffscreen(Q00,Q10,Q11,Q01)) continue;
+        const S00={x:u0*sW,y:v0*sH}, S10={x:u1*sW,y:v0*sH};
+        const S01={x:u0*sW,y:v1*sH}, S11={x:u1*sW,y:v1*sH};
+        // tri 1
+        ctx.save();
+        ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q10.x,Q10.y); ctx.lineTo(Q11.x,Q11.y); ctx.closePath(); ctx.clip();
+        setTriTransform(ctx, S00,S10,S11, Q00,Q10,Q11);
+        ctx.drawImage(src, 0,0);
+        ctx.restore();
+        // tri 2
+        ctx.save();
+        ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q11.x,Q11.y); ctx.lineTo(Q01.x,Q01.y); ctx.closePath(); ctx.clip();
+        setTriTransform(ctx, S00,S11,S01, Q00,Q11,Q01);
+        ctx.drawImage(src, 0,0);
+        ctx.restore();
+      }
+    }
+
+    ctx.imageSmoothingEnabled = prevSmooth;
+    ctx.restore();
+  }
 
   function drawActivePath(){ if(!activePathPoiId) return; const p=POIS.find(x=>x.id===activePathPoiId); if(!p||!Array.isArray(p.path)||p.path.length<2) return; const col=colorForPOI(p); const {r,g,b}=hexToRgb(col); ctx.save(); ctx.lineWidth=6; ctx.lineJoin='round'; ctx.lineCap='round'; ctx.strokeStyle=`rgba(${r},${g},${b},0.5)`; ctx.beginPath(); for(let i=0;i<p.path.length;i++){ const ll=p.path[i]; const m=mercXY(ll[0],ll[1]); const s=worldToScreen(m.x,m.y); if(i===0) ctx.moveTo(s.x,s.y); else ctx.lineTo(s.x,s.y);} ctx.stroke(); ctx.restore(); }
 
-  function render(){ updateLabelVisibility(); ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,cssW,cssH); drawOSM(); drawTurkart(); drawActivePath(); if(lastPos){ const sp=worldToScreen(lastPos.mx,lastPos.my); marker.style.left=sp.x+'px'; marker.style.top=sp.y+'px'; marker.hidden=false; if(lastPos.acc){ const pxR=lastPos.acc*scale; accCircle.style.width=(pxR*2)+'px'; accCircle.style.height=(pxR*2)+'px'; accCircle.style.left=sp.x+'px'; accCircle.style.top=sp.y+'px'; accCircle.hidden=false; } } updatePOIPositions(); }
+  function render(){
+    const now = performance.now();
+    if (isInteracting) {
+      const minInterval = 1000/30; // maks ~30 fps under interaksjon
+      if (now - lastFrame < minInterval) { rafId = null; requestRender(); return; }
+    }
+    lastFrame = now;
+    updateLabelVisibility();
+    ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,cssW,cssH);
+    drawOSM();
+    drawTurkart();
+    if (!isInteracting) drawActivePath();
+    if(lastPos){ const sp=worldToScreen(lastPos.mx,lastPos.my); marker.style.left=sp.x+'px'; marker.style.top=sp.y+'px'; marker.hidden=false; if(lastPos.acc){ const pxR=lastPos.acc*scale; accCircle.style.width=(pxR*2)+'px'; accCircle.style.height=(pxR*2)+'px'; accCircle.style.left=sp.x+'px'; accCircle.style.top=sp.y+'px'; accCircle.hidden=false; } }
+    updatePOIPositions();
+  }
 
   // ---- gestures ----
-  let pointers=new Map(), isPanning=false, panStartCenter=null, panStartPt=null; let pinchStartDist=0, pinchStartScale=1, pinchStartWorld=null, isPinching=false; let lastTapTime=0, lastTapPos=null; let draggingPoiId=null, suppressClickUntil=0;
-  canvas.addEventListener('pointerdown', e=>{ if(draggingPoiId) return; canvas.setPointerCapture(e.pointerId); pointers.set(e.pointerId,{x:e.clientX,y:e.clientY}); if(pointers.size===1){ isPanning=true; enterFastMode(); panStartCenter={...center}; panStartPt={x:e.clientX,y:e.clientY}; const now=performance.now(); const pos={x:e.clientX,y:e.clientY}; if(now-lastTapTime<300 && lastTapPos && Math.hypot(pos.x-lastTapPos.x,pos.y-lastTapPos.y)<40){ const world=screenToWorld(pos.x,pos.y); scale=Math.min(MAX_SCALE, scale*1.6); center.x=world.mx-(pos.x-cssW/2)/scale; center.y=(pos.y-cssH/2)/scale+world.my; requestRender(); lastTapTime=0; lastTapPos=null; scheduleRefine(); } else { lastTapTime=now; lastTapPos=pos; } } else if(pointers.size===2){ isPinching=true; isPanning=false; enterFastMode(); const [p1,p2]=[...pointers.values()]; pinchStartDist=Math.hypot(p2.x-p1.x,p2.y-p1.y); pinchStartScale=scale; const mid={x:(p1.x+p2.x)/2,y:(p1.y+p2.y)/2}; pinchStartWorld=screenToWorld(mid.x,mid.y); } });
-  canvas.addEventListener('pointermove', e=>{ if(!pointers.has(e.pointerId)) return; pointers.set(e.pointerId,{x:e.clientX,y:e.clientY}); if(isPinching && pointers.size>=2){ const [p1,p2]=[...pointers.values()].slice(0,2); const curDist=Math.hypot(p2.x-p1.x,p2.y-p1.y); if(pinchStartDist>0){ scale=Math.max(MIN_SCALE, Math.min(MAX_SCALE, pinchStartScale*(curDist/pinchStartDist))); } const mid={x:(p1.x+p2.x)/2,y:(p1.y+p2.y)/2}; center.x=pinchStartWorld.mx-(mid.x-cssW/2)/scale; center.y=(mid.y-cssH/2)/scale+pinchStartWorld.my; requestRender(); } else if(isPanning && pointers.size===1){ const p=pointers.get(e.pointerId); const dx=(p.x-panStartPt.x)/scale; const dy=(p.y-panStartPt.y)/scale; center.x=panStartCenter.x-dx; center.y=panStartCenter.y+dy; requestRender(); } });
-  function endPointer(e){ pointers.delete(e.pointerId); if(pointers.size<2) isPinching=false; if(pointers.size===0){ isPanning=false; } scheduleRefine(); }
-  canvas.addEventListener('pointerup', endPointer); canvas.addEventListener('pointercancel', endPointer); canvas.addEventListener('pointerout', endPointer); canvas.addEventListener('pointerleave', endPointer);
-  canvas.addEventListener('wheel', e=>{ e.preventDefault(); enterFastMode(); const factor=Math.pow(1.0015,-e.deltaY); const pos={x:e.clientX,y:e.clientY}; const world=screenToWorld(pos.x,pos.y); scale=Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale*factor)); center.x=world.mx-(pos.x-cssW/2)/scale; center.y=(pos.y-cssH/2)/scale+world.my; requestRender(); scheduleRefine(); }, {passive:false});
+  const gestureTarget = document.getElementById('map'); // fang pointere over hele kartet
+  let pointers=new Map(), isPanning=false, panStartCenter=null, panStartPt=null; let pinchStartDist=0, pinchStartScale=1, pinchStartWorld=null, isPinching=false; let lastTapTime=0, lastTapPos=null; let draggingPoiId=null, suppressClickUntil=0; let lastFrame=0;
+  function throttle(){ const now=performance.now(); if(isInteracting && now-lastFrame < 1000/30) return true; lastFrame=now; return false; }
+
+  gestureTarget.addEventListener('pointerdown', (e)=>{
+    e.preventDefault();
+    if (draggingPoiId) return;
+    gestureTarget.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+    if (pointers.size===1){
+      isPanning = true; enterFastMode();
+      panStartCenter = {...center}; panStartPt = {x:e.clientX, y:e.clientY};
+      const now = performance.now(); const pos = {x:e.clientX, y:e.clientY};
+      if (now - lastTapTime < 300 && lastTapPos && Math.hypot(pos.x-lastTapPos.x, pos.y-lastTapPos.y) < 40){
+        const world = screenToWorld(pos.x, pos.y);
+        scale = Math.min(MAX_SCALE, scale * 1.6);
+        center.x = world.mx - (pos.x - cssW/2)/scale;
+        center.y = (pos.y - cssH/2)/scale + world.my;
+        requestRender(); lastTapTime = 0; lastTapPos = null; scheduleRefine();
+      } else { lastTapTime = now; lastTapPos = pos; }
+    } else if (pointers.size===2){
+      isPinching = true; isPanning=false; enterFastMode();
+      const [p1,p2] = [...pointers.values()];
+      pinchStartDist = Math.hypot(p2.x-p1.x, p2.y-p1.y);
+      pinchStartScale = scale; const mid = { x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2 };
+      pinchStartWorld = screenToWorld(mid.x, mid.y);
+    }
+  }, {passive:false});
+
+  gestureTarget.addEventListener('pointermove', (e)=>{
+    if (!pointers.has(e.pointerId)) return; e.preventDefault();
+    pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+    if (throttle()) return;
+    if (isPinching && pointers.size>=2){
+      const [p1,p2] = [...pointers.values()].slice(0,2);
+      const curDist = Math.hypot(p2.x-p1.x, p2.y-p1.y);
+      if (pinchStartDist>0){ scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, pinchStartScale * (curDist/pinchStartDist))); }
+      const mid = { x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2 };
+      center.x = pinchStartWorld.mx - (mid.x - cssW/2)/scale;
+      center.y = (mid.y - cssH/2)/scale + pinchStartWorld.my;
+      requestRender();
+    } else if (isPanning && pointers.size===1){
+      const p = pointers.get(e.pointerId);
+      const dx = (p.x - panStartPt.x)/scale; const dy = (p.y - panStartPt.y)/scale;
+      center.x = panStartCenter.x - dx; center.y = panStartCenter.y + dy; requestRender();
+    }
+  }, {passive:false});
+
+  function endPointer(e){ pointers.delete(e.pointerId); if (pointers.size<2) isPinching=false; if (pointers.size===0){ isPanning=false; } scheduleRefine(); }
+  gestureTarget.addEventListener('pointerup', endPointer);
+  gestureTarget.addEventListener('pointercancel', endPointer);
+  gestureTarget.addEventListener('pointerout', endPointer);
+  gestureTarget.addEventListener('pointerleave', endPointer);
+
+  gestureTarget.addEventListener('wheel', (e)=>{
+    e.preventDefault(); enterFastMode();
+    const factor=Math.pow(1.0015,-e.deltaY);
+    const pos={x:e.clientX,y:e.clientY}; const world=screenToWorld(pos.x,pos.y);
+    scale=Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale*factor));
+    center.x=world.mx-(pos.x-cssW/2)/scale; center.y=(pos.y-cssH/2)/scale+world.my;
+    requestRender(); scheduleRefine();
+  }, {passive:false});
 
   // ---- bilde & init ----
-  function initNow(){ buildPOIMarkers(); resize(); fitView(); requestRender(); setTimeout(()=>{ resize(); fitView(); requestRender(); setStatus('Klar (JS OK)'); }, 200); }
+  function initNow(){ buildPOIMarkers(); resize(); fitView(); requestRender(); setStatus('Klar (JS OK)'); }
   initNow();
 
   // ---- GPS ----
-  // (watchId/lastPos er definert tidligere for å unngå TDZ-feil) const GPS_COLOR_DEFAULT='#2563eb';
+  const GPS_COLOR_DEFAULT='#2563eb';
   function hexToRgb(hex){ hex=hex.replace('#',''); if(hex.length===3) hex=hex.split('').map(c=>c+c).join(''); const num=parseInt(hex,16); return {r:(num>>16)&255,g:(num>>8)&255,b:num&255}; }
   function setGpsColor(hex){ gpsDropPath.setAttribute('fill', hex); const {r,g,b}=hexToRgb(hex); accCircle.style.borderColor=`rgba(${r},${g},${b},0.65)`; accCircle.style.background=`rgba(${r},${g},${b},0.10)`; }
   gpsColorInput.addEventListener('input', ()=> setGpsColor(gpsColorInput.value||GPS_COLOR_DEFAULT)); setGpsColor(gpsColorInput.value||GPS_COLOR_DEFAULT);
   function updateMarker(lat,lng,acc){ const m=mercXY(lat,lng); lastPos={mx:m.x,my:m.y,acc:acc||0}; requestRender(); }
-  function startWatchPrecise(){ if(!navigator.geolocation){ setStatus('Geolocation ikke støttet'); return;} stopWatch(); const opts={enableHighAccuracy:true, timeout:30000, maximumAge:0}; marker.hidden=false; accCircle.hidden=false; setStatus('Sporer (presis)…'); watchId=navigator.geolocation.watchPosition(pos=>{ updateMarker(pos.coords.latitude,pos.coords.longitude,pos.coords.accuracy); setStatus(`Sporer: ${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)} (±${Math.round(pos.coords.accuracy)} m)`); }, err=>{ const code=({1:'PERMISSION_DENIED',2:'POSITION_UNAVAILABLE',3:'TIMEOUT'})[err.code]||'ERROR'; setStatus(`Sporing feilet: ${code} – ${err.message}`); }, opts); }
+  function startWatchPrecise(){ if(!navigator.geolocation){ setStatus('Geolocation ikke støttet'); return;} stopWatch(); marker.hidden=false; accCircle.hidden=false; const opts={enableHighAccuracy:true, timeout:30000, maximumAge:0}; setStatus('Sporer (presis)…'); watchId=navigator.geolocation.watchPosition( pos => { updateMarker(pos.coords.latitude,pos.coords.longitude,pos.coords.accuracy); setStatus(`Sporer: ${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)} (±${Math.round(pos.coords.accuracy)} m)`); }, err => { const code = ({1:'PERMISSION_DENIED',2:'POSITION_UNAVAILABLE',3:'TIMEOUT'})[err.code]||'ERROR'; setStatus(`Sporing feilet: ${code} – ${err.message}`); // fall-back mindre presis
+      try{ if(watchId!=null) navigator.geolocation.clearWatch(watchId);}catch{}
+      watchId = navigator.geolocation.watchPosition( pos => { updateMarker(pos.coords.latitude,pos.coords.longitude,pos.coords.accuracy); setStatus(`Sporer (rask): ${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)} (±${Math.round(pos.coords.accuracy)} m)`); }, e2 => { const c2 = ({1:'PERMISSION_DENIED',2:'POSITION_UNAVAILABLE',3:'TIMEOUT'})[e2.code]||'ERROR'; setStatus(`Sporing feilet: ${c2} – ${e2.message}. Tips: Tillat posisjon for siden i nettleseren.`); }, { enableHighAccuracy:false, timeout:20000, maximumAge:60000 } ); }, opts ); }
   function stopWatch(){ if(watchId!=null){ navigator.geolocation.clearWatch(watchId); watchId=null;} setStatus('Sporing stoppet'); }
-  async function centerOnMe(){ if(lastPos){ center.x=lastPos.mx; center.y=lastPos.my; requestRender(); scheduleRefine(); return; } if(!navigator.geolocation){ setStatus('Geolocation ikke støttet'); return;} setStatus('Henter posisjon…'); navigator.geolocation.getCurrentPosition(pos=>{ updateMarker(pos.coords.latitude,pos.coords.longitude,pos.coords.accuracy); center.x=lastPos.mx; center.y=lastPos.my; requestRender(); scheduleRefine(); setStatus(`Posisjon: ${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)} (±${Math.round(pos.coords.accuracy)} m)`); }, err=>{ const code=({1:'PERMISSION_DENIED',2:'POSITION_UNAVAILABLE',3:'TIMEOUT'})[err.code]||'ERROR'; setStatus(`Kunne ikke hente posisjon: ${code} – ${err.message}`); }, {enableHighAccuracy:true, timeout:15000, maximumAge:0}); }
-  document.getElementById('centerMe').onclick=centerOnMe; document.getElementById('showPosition').onclick=startWatchPrecise; document.getElementById('stopWatch').onclick=stopWatch;
+  async function centerOnMe(){ if(lastPos){ center.x=lastPos.mx; center.y=lastPos.my; requestRender(); scheduleRefine(); return; } if(!navigator.geolocation){ setStatus('Geolocation ikke støttet'); return;} setStatus('Henter posisjon…'); navigator.geolocation.getCurrentPosition(pos=>{ updateMarker(pos.coords.latitude,pos.coords.longitude,pos.coords.accuracy); center.x=lastPos.mx; center.y=lastPos.my; requestRender(); scheduleRefine(); setStatus(`Posisjon: ${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)} (±${Math.round(pos.coords.accuracy)} m)`); }, err=>{ const code=({1:'PERMISSION_DENIED',2:'POSITION_UNAVAILABLE',3:'TIMEOUT'})[err.code]||'ERROR'; setStatus(`Kunne ikke hente posisjon: ${code} – ${err.message}`); }, {enableHighAccuracy:true, timeout:12000, maximumAge:0}); }
+  document.getElementById('centerMe').onclick=centerOnMe; document.getElementById('showPosition').onclick=()=>{ centerOnMe(); startWatchPrecise(); }; document.getElementById('stopWatch').onclick=stopWatch;
 
   // ---- POI ----
-  
   function colorForCategory(cat){ const key=(cat||'').toString().toLowerCase(); const map={ 'parkering':'#0ea5e9','badeplass':'#06b6d4','utsiktspunkt':'#8b5cf6','husmannsplass':'#92400e','båtslipp':'#0284c7','matbutikk':'#22c55e','bensinstasjon':'#ef4444','aktivitet':'#f97316','kulturminne':'#b91c1c','interessepunkt':'#14b8a6','turforslag':'#3b82f6','turmål':'#22c55e' }; return map[key]||'#6b7280'; }
   function colorForPOI(p){ return p.color || colorForCategory(p.category||'poi'); }
   function iconForPOI(p){ const color=colorForPOI(p); return '<svg width="24" height="24" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><path d="M14 1 C8 1 4 5.5 4 10.5 c0 6.5 8 13 10 16 2-3 10-9.5 10-16 C24 5.5 20 1 14 1z" fill="'+color+'" stroke="white" stroke-width="2"/><circle cx="14" cy="11" r="3.5" fill="white"/></svg>'; }
@@ -299,7 +440,6 @@
   document.getElementById('zoomIn').onclick=()=>{ enterFastMode(); const p={x:cssW/2,y:cssH/2}; const w=screenToWorld(p.x,p.y); scale=Math.min(MAX_SCALE, scale*1.3); center.x=w.mx-(p.x-cssW/2)/scale; center.y=(p.y-cssH/2)/scale+w.my; requestRender(); scheduleRefine(); };
   document.getElementById('zoomOut').onclick=()=>{ enterFastMode(); const p={x:cssW/2,y:cssH/2}; const w=screenToWorld(p.x,p.y); scale=Math.max(MIN_SCALE, scale/1.3); center.x=w.mx-(p.x-cssW/2)/scale; center.y=(p.y-cssH/2)/scale+w.my; requestRender(); scheduleRefine(); };
   document.getElementById('zoomFullOut').onclick=()=>{ enterFastMode(); const p={x:cssW/2,y:cssH/2}; const w=screenToWorld(p.x,p.y); scale=MIN_SCALE; center.x=w.mx-(p.x-cssW/2)/scale; center.y=(p.y-cssH/2)/scale+w.my; requestRender(); scheduleRefine(); };
-
 })();
 </script>
 </body>
