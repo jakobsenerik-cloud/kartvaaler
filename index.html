@@ -28,6 +28,8 @@
   .poi-marker .lbl{position:absolute; left:14px; top:-2px; padding:2px 6px; background:rgba(255,255,255,.95); border:1px solid #e5e7eb; border-radius:6px; font-size:12px; white-space:nowrap; opacity:0; visibility:hidden; transform:translateX(6px); transition:opacity .15s ease, transform .15s ease;}
   .poi-marker:hover .lbl, .poi-marker:focus-within .lbl, .poi-marker.dragging .lbl{opacity:1; visibility:visible; transform:translateX(0);} 
   .poi-marker.touchflash .lbl{opacity:1; visibility:visible; transform:translateX(0);} 
+  /* Skjul etiketter ved lav zoom / under pan/zoom */
+  .no-labels .poi-marker .lbl, .suppress-labels .poi-marker .lbl { display:none !important; } 
   /* POI-popup/editor */
   #poiPopup{position:absolute; z-index:6; max-width:320px; background:#fff; border:1px solid #e5e7eb; border-radius:10px; box-shadow:0 12px 30px rgba(0,0,0,.15); padding:10px; pointer-events:auto; max-height:70vh; overflow:auto}
   #poiPopup h3{margin:0 0 6px;font-size:16px}
@@ -41,6 +43,8 @@
   #poiPopup .actions{display:flex; gap:6px; margin-top:8px; flex-wrap:wrap}
   #poiPopup .close{position:absolute; right:8px; top:6px; border:0; background:transparent; font-size:18px; cursor:pointer}
   #poiPopup .danger{border-color:#ef4444;color:#b91c1c}
+  /* Håndtak for flytting – skjules i visningsmodus */
+  #poiPopup .handle{cursor:move; user-select:none; -webkit-user-select:none; touch-action:none; font-size:12px; color:#374151; background:#f3f4f6; border:1px solid #e5e7eb; border-radius:6px; padding:4px 8px; margin:0 24px 8px 0; display:none}
   /* Edit-bar */
   #editBar{display:none; align-items:center; gap:8px}
   #editBar input[type=file]{display:none}
@@ -136,6 +140,7 @@
   ];
   // Zoom- og warp-innstillinger
   const MIN_SCALE = 0.01, MAX_SCALE = 8000;
+  const LABEL_MIN_ZOOM = 14; // under dette vises ikke etiketter
   const GRID_FINE = {cols:24, rows:24};
   const GRID_FAST = {cols:5, rows:5};
   let currentGrid = GRID_FINE;
@@ -228,10 +233,10 @@
   let img = new Image(), imgW=0, imgH=0;
 
   // ---- Render coalescing ----
-  let rafId = null, refineTimer = null;
+  let rafId = null, refineTimer = null, isInteracting = false;
   function requestRender(){ if (rafId) return; rafId = requestAnimationFrame(()=>{ rafId = null; render(); }); }
-  function enterFastMode(){ currentGrid = GRID_FAST; ctx.imageSmoothingEnabled = false; }
-  function scheduleRefine(){ if (refineTimer) clearTimeout(refineTimer); refineTimer = setTimeout(()=>{ currentGrid = GRID_FINE; ctx.imageSmoothingEnabled = true; requestRender(); }, REFINE_DELAY); }
+  function enterFastMode(){ currentGrid = GRID_FAST; ctx.imageSmoothingEnabled = false; isInteracting = true; poiLayer.classList.add('suppress-labels'); }
+  function scheduleRefine(){ if (refineTimer) clearTimeout(refineTimer); refineTimer = setTimeout(()=>{ currentGrid = GRID_FINE; ctx.imageSmoothingEnabled = true; isInteracting = false; poiLayer.classList.remove('suppress-labels'); requestRender(); }, REFINE_DELAY); }, REFINE_DELAY); }
 
   function resize(){ const rect = canvas.getBoundingClientRect(); cssW = canvas.width = Math.round(rect.width); cssH = canvas.height= Math.round(rect.height); requestRender(); updatePOIPositions(); if (!poiPopup.hidden && popupManualPos){ const p = clampPopup(popupManualPos.x, popupManualPos.y); poiPopup.style.left = Math.round(p.x)+'px'; poiPopup.style.top = Math.round(p.y)+'px'; popupManualPos = p; } }
   (function(){ const mapEl = document.getElementById('map'); if (window.ResizeObserver){ try{ new ResizeObserver(resize).observe(mapEl); } catch{ window.addEventListener('resize', resize); setInterval(resize, 1500); } } else { window.addEventListener('resize', resize); setInterval(resize, 1500); } })();
@@ -240,6 +245,8 @@
 
   const worldToScreen = (mx,my)=>({ x: (mx - center.x)*scale + cssW/2, y: (center.y - my)*scale + cssH/2 });
   const screenToWorld = (sx,sy)=>({ mx: (sx - cssW/2)/scale + center.x, my: center.y - (sy - cssH/2)/scale });
+  function currentZoom(){ return Math.log2(scale * TWO_PI_R / 256); }
+  function updateLabelVisibility(){ const z = currentZoom(); if (z < LABEL_MIN_ZOOM) poiLayer.classList.add('no-labels'); else poiLayer.classList.remove('no-labels'); }
 
   // --------- OSM tiles ----------
   const tileCache = new Map(); let tileOk=0, tileFail=0;
@@ -268,7 +275,7 @@
 
   function drawActivePath(){ if (!activePathPoiId) return; const p = POIS.find(x=>x.id===activePathPoiId); if (!p || !Array.isArray(p.path) || p.path.length < 2) return; const col = colorForPOI(p); const {r,g,b} = hexToRgb(col); ctx.save(); ctx.lineWidth = 6; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.strokeStyle = `rgba(${r},${g},${b},0.5)`; ctx.beginPath(); for (let i=0;i<p.path.length;i++){ const ll = p.path[i]; const m = mercXY(ll[0], ll[1]); const s = worldToScreen(m.x, m.y); if (i===0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y); } ctx.stroke(); ctx.restore(); }
 
-  function render(){ ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,cssW,cssH); drawOSM(); drawTurkart(); drawActivePath(); if (lastPos){ const sp = worldToScreen(lastPos.mx,lastPos.my); marker.style.left = sp.x + 'px'; marker.style.top  = sp.y + 'px'; marker.hidden = false; if (lastPos.acc){ const pxR = lastPos.acc * scale; accCircle.style.width = (pxR*2)+'px'; accCircle.style.height= (pxR*2)+'px'; accCircle.style.left = sp.x + 'px'; accCircle.style.top  = sp.y + 'px'; accCircle.hidden = false; } } updatePOIPositions(); }
+  function render(){ updateLabelVisibility(); ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,cssW,cssH); drawOSM(); drawTurkart(); drawActivePath(); if (lastPos){ const sp = worldToScreen(lastPos.mx,lastPos.my); marker.style.left = sp.x + 'px'; marker.style.top  = sp.y + 'px'; marker.hidden = false; if (lastPos.acc){ const pxR = lastPos.acc * scale; accCircle.style.width = (pxR*2)+'px'; accCircle.style.height= (pxR*2)+'px'; accCircle.style.left = sp.x + 'px'; accCircle.style.top  = sp.y + 'px'; accCircle.hidden = false; } } updatePOIPositions(); }
 
   // ---- Gestures: pan, pinch, dbl-tap IN, two-finger tap OUT ----
   let pointers = new Map(); let isPanning=false, panStartCenter=null, panStartPt=null; let pinchStartDist=0, pinchStartScale=1, pinchStartWorld=null, isPinching=false; let lastTapTime=0, lastTapPos=null, twoTapTimer=null; let draggingPoiId=null, suppressClickUntil=0;
@@ -331,9 +338,11 @@
 
   function updatePOIPositions(){ const show = poiToggle.checked; const q = (poiSearch.value||'').trim().toLowerCase(); for (const p of POIS){ const el = poiElems.get(p.id); if (!el) continue; if (!show){ el.style.display='none'; continue; } const hit = !q || (p.title&&p.title.toLowerCase().includes(q)) || (p.desc&&p.desc.toLowerCase().includes(q)) || (p.category&&p.category.toLowerCase().includes(q)); if (!hit){ el.style.display='none'; continue; } const m = mercXY(p.lat, p.lng); const s = worldToScreen(m.x, m.y); el.style.left = s.x+'px'; el.style.top  = s.y+'px'; el.style.display = (s.x<-50||s.y<-50||s.x>cssW+50||s.y>cssH+50) ? 'none' : 'block'; el._lastPos = s; } }
 
-  function openPOIPopup(p, screenPt){ activePathPoiId = p.id; requestRender(); const parts = []; parts.push('<h3>'+escapeHtml(p.title||'Punkt')+'</h3>'); if (p.image) parts.push('<img src="'+encodeURI(p.image)+'" alt="">'); if (p.desc) parts.push('<p>'+escapeHtml(p.desc)+'</p>'); const meta = ['Kategori: '+escapeHtml(p.category||'—'), 'Lat/Lng: '+p.lat.toFixed(5)+', '+p.lng.toFixed(5)]; if (p.link) meta.push('<a href="'+escapeURITrusted(p.link)+'" target="_blank" rel="noopener">Mer info ↗</a>'); parts.push('<div class="meta">'+meta.join(' · ')+'</div>'); if (editMode) parts.push('<div class="actions"><button id="popupEdit">Rediger</button><button id="popupDelete" class="danger">Slett</button></div>'); poiContent.innerHTML = parts.join(''); poiPopup.hidden = false; positionPopupNear(screenPt); if (editMode){ poiContent.querySelector('#popupEdit').onclick=()=> openPOIEditor(p, screenPt); poiContent.querySelector('#popupDelete').onclick=()=> deletePOI(p); } }
+  function openPOIPopup(p, screenPt){
+    if (poiHandle) poiHandle.style.display='none'; activePathPoiId = p.id; requestRender(); const parts = []; parts.push('<h3>'+escapeHtml(p.title||'Punkt')+'</h3>'); if (p.image) parts.push('<img src="'+encodeURI(p.image)+'" alt="">'); if (p.desc) parts.push('<p>'+escapeHtml(p.desc)+'</p>'); const meta = ['Kategori: '+escapeHtml(p.category||'—'), 'Lat/Lng: '+p.lat.toFixed(5)+', '+p.lng.toFixed(5)]; if (p.link) meta.push('<a href="'+escapeURITrusted(p.link)+'" target="_blank" rel="noopener">Mer info ↗</a>'); parts.push('<div class="meta">'+meta.join(' · ')+'</div>'); if (editMode) parts.push('<div class="actions"><button id="popupEdit">Rediger</button><button id="popupDelete" class="danger">Slett</button></div>'); poiContent.innerHTML = parts.join(''); poiPopup.hidden = false; positionPopupNear(screenPt); if (editMode){ poiContent.querySelector('#popupEdit').onclick=()=> openPOIEditor(p, screenPt); poiContent.querySelector('#popupDelete').onclick=()=> deletePOI(p); } }
 
-  function openPOIEditor(p, screenPt){ activePathPoiId = p.id; requestRender(); const cats = ['Parkering','Badeplass','Utsiktspunkt','Husmannsplass','Båtslipp','Matbutikk','Bensinstasjon','Aktivitet','Kulturminne','Interessepunkt','Turforslag']; const colorVal = colorForPOI(p); const isRoute = (p.category||'').toLowerCase()==='turforslag'; const pathLen = calcPathLenKm(p.path||[]); let routeBlock = ''; if (isRoute){ const pts = Array.isArray(p.path)? p.path.length : 0; routeBlock = '' + '<div class="row" id="routeRow">' + '<div style="font-size:12px;color:#374151">Sti for dette turforslaget: <span id="e_pathinfo">'+pts+' punkter'+(pathLen?(' · '+pathLen.toFixed(2)+' km'):'')+'</span></div>' + '</div>' + '<div class="row">' + '<button id="e_draw">Tegn/fortsett sti</button>' + '<button id="e_done">Ferdig</button>' + '<button id="e_undo">Angre punkt</button>' + '<button id="e_clear" class="danger">Tøm sti</button>' + '</div>'; }
+  function openPOIEditor(p, screenPt){
+    if (poiHandle) poiHandle.style.display='inline-block'; activePathPoiId = p.id; requestRender(); const cats = ['Parkering','Badeplass','Utsiktspunkt','Husmannsplass','Båtslipp','Matbutikk','Bensinstasjon','Aktivitet','Kulturminne','Interessepunkt','Turforslag']; const colorVal = colorForPOI(p); const isRoute = (p.category||'').toLowerCase()==='turforslag'; const pathLen = calcPathLenKm(p.path||[]); let routeBlock = ''; if (isRoute){ const pts = Array.isArray(p.path)? p.path.length : 0; routeBlock = '' + '<div class="row" id="routeRow">' + '<div style="font-size:12px;color:#374151">Sti for dette turforslaget: <span id="e_pathinfo">'+pts+' punkter'+(pathLen?(' · '+pathLen.toFixed(2)+' km'):'')+'</span></div>' + '</div>' + '<div class="row">' + '<button id="e_draw">Tegn/fortsett sti</button>' + '<button id="e_done">Ferdig</button>' + '<button id="e_undo">Angre punkt</button>' + '<button id="e_clear" class="danger">Tøm sti</button>' + '</div>'; }
     poiContent.innerHTML = ''+
       '<h3>Rediger punkt</h3>'+
       '<div class="row"><label>Tittel<br><input id="e_title" type="text" value="'+escapeAttr(p.title||'')+'"></label></div>'+
