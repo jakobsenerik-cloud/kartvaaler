@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>Kartvaaler – OSM + kartbilde + GPS + POI (v12)</title>
+<title>Kartvaaler – OSM + kartbilde + GPS + POI (v12.1 clean)</title>
 <style>
   html,body{margin:0;height:100%;overflow:hidden;background:#eaf0f4;overscroll-behavior:none}
   #ui{position:fixed;z-index:10;top:10px;left:10px;background:rgba(255,255,255,.95);padding:8px 10px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -93,7 +93,7 @@
 <script>
 (function(){
   // ----- versjon / status -----
-  const VERSION = 'v12 ' + new Date().toISOString().slice(0,16).replace('T',' ');
+  const VERSION = 'v12.1 ' + new Date().toISOString().slice(0,16).replace('T',' ');
   const statusEl = document.getElementById('status');
   const setStatus = (m)=> statusEl.textContent = m;
   document.getElementById('ver').textContent = VERSION;
@@ -120,8 +120,8 @@
   // ----- projeksjon -----
   const R=6378137, TWO_PI_R=2*Math.PI*R;
   const toRad=d=>d*Math.PI/180;
-  function mercXY(lat,lng){ return { x:R*toRad(lng), y:R*Math.log(Math.tan(Math.PI/4+toRad(lat)/2)) }; }
-  function invMercLL(mx,my){ return { lng:(mx/R)*180/Math.PI, lat:(2*Math.atan(Math.exp(my/R))-Math.PI/2)*180/Math.PI }; }
+  const mercXY=(lat,lng)=>({ x:R*toRad(lng), y:R*Math.log(Math.tan(Math.PI/4+toRad(lat)/2)) });
+  const invMercLL=(mx,my)=>({ lng:(mx/R)*180/Math.PI, lat:(2*Math.atan(Math.exp(my/R))-Math.PI/2)*180/Math.PI });
   const cornersM=CORNERS.map(([lat,lng])=>mercXY(lat,lng));
 
   // ----- DOM -----
@@ -152,20 +152,20 @@
 
   // ----- world/screen -----
   let cssW=0, cssH=0; let center={x:0,y:0}; let scale=1; let isInteracting=false; let currentGrid=GRID_FINE; let refineTimer=null; let rafId=null; let lastFrame=0;
-  function worldToScreen(mx,my){ return { x:(mx-center.x)*scale+cssW/2, y:(center.y-my)*scale+cssH/2 }; }
-  function screenToWorld(sx,sy){ return { mx:(sx-cssW/2)/scale+center.x, my:center.y-(sy-cssH/2)/scale }; }
-  function currentZoom(){ return Math.log2(scale*TWO_PI_R/256); }
-  function updateLabelVisibility(){ poiLayer.classList.toggle('no-labels', currentZoom()<LABEL_MIN_ZOOM); }
-  function requestRender(){ if(rafId) return; rafId=requestAnimationFrame(()=>{rafId=null; render();}); }
-  function enterFastMode(){ currentGrid=GRID_FAST; ctx.imageSmoothingEnabled=false; isInteracting=true; poiLayer.classList.add('suppress-labels'); }
-  function scheduleRefine(){ if(refineTimer) clearTimeout(refineTimer); refineTimer=setTimeout(()=>{ currentGrid=GRID_FINE; ctx.imageSmoothingEnabled=true; isInteracting=false; poiLayer.classList.remove('suppress-labels'); requestRender(); }, REFINE_DELAY); }
+  const worldToScreen=(mx,my)=>({ x:(mx-center.x)*scale+cssW/2, y:(center.y-my)*scale+cssH/2 });
+  const screenToWorld=(sx,sy)=>({ mx:(sx-cssW/2)/scale+center.x, my:center.y-(sy-cssH/2)/scale });
+  const currentZoom=()=> Math.log2(scale*TWO_PI_R/256);
+  const updateLabelVisibility=()=> poiLayer.classList.toggle('no-labels', currentZoom()<LABEL_MIN_ZOOM);
+  const requestRender=()=>{ if(rafId) return; rafId=requestAnimationFrame(()=>{rafId=null; render();}); };
+  const enterFastMode=()=>{ currentGrid=GRID_FAST; ctx.imageSmoothingEnabled=false; isInteracting=true; poiLayer.classList.add('suppress-labels'); };
+  const scheduleRefine=()=>{ if(refineTimer) clearTimeout(refineTimer); refineTimer=setTimeout(()=>{ currentGrid=GRID_FINE; ctx.imageSmoothingEnabled=true; isInteracting=false; poiLayer.classList.remove('suppress-labels'); requestRender(); }, REFINE_DELAY); };
 
   function resize(){ const r=canvas.getBoundingClientRect(); cssW=canvas.width=Math.round(r.width); cssH=canvas.height=Math.round(r.height); requestRender(); updatePOIPositions(); if(!poiPopup.hidden && popupManualPos){ const p=clampPopup(popupManualPos.x,popupManualPos.y); poiPopup.style.left=Math.round(p.x)+'px'; poiPopup.style.top=Math.round(p.y)+'px'; popupManualPos=p; } }
   (function(){ const mapEl=document.getElementById('map'); if(window.ResizeObserver){ try{ new ResizeObserver(resize).observe(mapEl);}catch{ window.addEventListener('resize',resize); setInterval(resize,1500);} } else { window.addEventListener('resize',resize); setInterval(resize,1500);} })();
   function fitView(){ const xs=cornersM.map(p=>p.x), ys=cornersM.map(p=>p.y); const minX=Math.min(...xs), maxX=Math.max(...xs); const minY=Math.min(...ys), maxY=Math.max(...ys); const pad=0.08; const needX=(cssW*(1-pad*2))/(maxX-minX); const needY=(cssH*(1-pad*2))/(maxY-minY); scale=Math.min(needX,needY); center.x=(minX+maxX)/2; center.y=(minY+maxY)/2; requestRender(); updatePOIPositions(); }
 
   // ----- OSM tiles -----
-  const tileCache=new Map(); let tileFail=0; function tileUrl(z,x,y){ return `https://tile.openstreetmap.org/${z}/${x}/${y}.png`; }
+  const tileCache=new Map(); let tileFail=0; const tileUrl=(z,x,y)=>`https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
   function getTile(z,x,y){ const n=1<<z; x=((x%n)+n)%n; if(y<0||y>=n) return null; const key=`${z}/${x}/${y}`; let im=tileCache.get(key); if(!im){ im=new Image(); im.decoding='async'; im.loading='lazy'; im.referrerPolicy='no-referrer'; im.src=tileUrl(z,x,y); im.onload=()=>requestRender(); im.onerror=()=>{ if(++tileFail===8) setStatus('Klarte ikke å laste OSM-fliser'); }; tileCache.set(key,im);} return im.complete?im:null; }
   function mercToWorldPx(mx,my,z){ const S=256*(1<<z); const u=(mx+Math.PI*R)/TWO_PI_R; const v=(Math.PI*R-my)/TWO_PI_R; return {px:u*S, py:v*S}; }
   function drawOSM(){ let z=Math.round(currentZoom()); z=Math.max(0,Math.min(19,z)); const S=256*(1<<z); const mpp=TWO_PI_R/S; const spw=scale*mpp; const c=mercToWorldPx(center.x,center.y,z); const halfW=cssW/spw/2, halfH=cssH/spw/2; const minPx=c.px-halfW, maxPx=c.px+halfW; const minPy=c.py-halfH, maxPy=c.py+halfH; const minTx=Math.floor(minPx/256), maxTx=Math.floor(maxPx/256); const minTy=Math.floor(minPy/256), maxTy=Math.floor(maxPy/256);
@@ -186,7 +186,7 @@
 
   function render(){ const now=performance.now(); if(isInteracting){ const min=1000/30; if(now-lastFrame<min){ rafId=null; requestRender(); return; } } lastFrame=now; updateLabelVisibility(); ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,cssW,cssH); drawOSM(); drawTurkart(); if(!isInteracting) drawActivePath(); if(lastPos){ const sp=worldToScreen(lastPos.mx,lastPos.my); marker.style.left=sp.x+'px'; marker.style.top=sp.y+'px'; marker.hidden=false; if(lastPos.acc){ const pxR=lastPos.acc*scale; accCircle.style.width=(pxR*2)+'px'; accCircle.style.height=(pxR*2)+'px'; accCircle.style.left=sp.x+'px'; accCircle.style.top=sp.y+'px'; accCircle.hidden=false; } } updatePOIPositions(); }
 
-  // ----- gester -----
+  // ----- gestures -----
   let pointers=new Map(), isPanning=false, panStartCenter=null, panStartPt=null; let pinchStartDist=0, pinchStartScale=1, pinchStartWorld=null, isPinching=false; let lastTapTime=0, lastTapPos=null; let draggingPoiId=null, suppressClickUntil=0; let popupManualPos=null;
 
   gestureTarget.addEventListener('pointerdown', (e)=>{
@@ -221,7 +221,7 @@
   initNow();
 
   // ----- GPS -----
-  function hexToRgb(hex){ hex=hex.replace('#',''); if(hex.length===3) hex=hex.split('').map(c=>c+c).join(''); const num=parseInt(hex,16); return {r:(num>>16)&255,g:(num>>8)&255,b:num&255}; }
+  function hexToRgb(hex){ hex=hex.replace('#',''); if(hex.length===3) hex=hex.split('').map(c=>c+c).join(''); const num=parseInt(hex,16); return {r:(num>>16)&255,g:(num>>8)&255,b=num&255}; }
   function setGpsColor(hex){ gpsDropPath.setAttribute('fill', hex); const {r,g,b}=hexToRgb(hex); accCircle.style.borderColor=`rgba(${r},${g},${b},0.65)`; accCircle.style.background=`rgba(${r},${g},${b},0.10)`; }
   gpsColorInput.addEventListener('input', ()=> setGpsColor(gpsColorInput.value||'#2563eb')); setGpsColor(gpsColorInput.value||'#2563eb');
   function updateMarker(lat,lng,acc){ const m=mercXY(lat,lng); lastPos={mx:m.x,my:m.y,acc:acc||0}; requestRender(); }
@@ -232,8 +232,8 @@
 
   // ----- POI -----
   function colorForCategory(cat){ const key=(cat||'').toString().toLowerCase(); const map={ 'parkering':'#0ea5e9','badeplass':'#06b6d4','utsiktspunkt':'#8b5cf6','husmannsplass':'#92400e','båtslipp':'#0284c7','matbutikk':'#22c55e','bensinstasjon':'#ef4444','aktivitet':'#f97316','kulturminne':'#b91c1c','interessepunkt':'#14b8a6','turforslag':'#3b82f6','turmål':'#22c55e' }; return map[key]||'#6b7280'; }
-  function colorForPOI(p){ return p.color||colorForCategory(p.category||'poi'); }
-  function iconForPOI(p){ const color=colorForPOI(p); return '<svg width="24" height="24" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><path d="M14 1 C8 1 4 5.5 4 10.5 c0 6.5 8 13 10 16 2-3 10-9.5 10-16 C24 5.5 20 1 14 1z" fill="'+color+'" stroke="white" stroke-width="2"/><circle cx="14" cy="11" r="3.5" fill="white"/></svg>'; }
+  const colorForPOI=(p)=> p.color||colorForCategory(p.category||'poi');
+  const iconForPOI=(p)=>{ const color=colorForPOI(p); return '<svg width="24" height="24" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><path d="M14 1 C8 1 4 5.5 4 10.5 c0 6.5 8 13 10 16 2-3 10-9.5 10-16 C24 5.5 20 1 14 1z" fill="'+color+'" stroke="white" stroke-width="2"/><circle cx="14" cy="11" r="3.5" fill="white"/></svg>'; };
   function buildPOIMarkers(){ poiLayer.innerHTML=''; poiElems.clear(); for(const p of POIS){ const el=document.createElement('div'); el.className='poi-marker'; el.dataset.id=p.id; el.innerHTML=iconForPOI(p)+(p.title?'<span class="lbl">'+escapeHtml(p.title)+'</span>':''); el.addEventListener('click', (e)=>{ if(performance.now()<suppressClickUntil){ suppressClickUntil=0; return; } e.stopPropagation(); if(editMode) openPOIEditor(p, el._lastPos||{x:cssW/2,y:cssH/2}); else openPOIPopup(p, el._lastPos||{x:cssW/2,y:cssH/2}); }); addTouchFlash(el); enableDragIfEdit(el,p); enableLongPressDelete(el,p); poiLayer.appendChild(el); poiElems.set(p.id,el);} }
   function updatePOIPositions(){ const show=poiToggle.checked; const q=(poiSearch.value||'').trim().toLowerCase(); for(const p of POIS){ const el=poiElems.get(p.id); if(!el) continue; if(!show){ el.style.display='none'; continue;} const hit=!q||(p.title&&p.title.toLowerCase().includes(q))||(p.desc&&p.desc.toLowerCase().includes(q))||(p.category&&p.category.toLowerCase().includes(q)); if(!hit){ el.style.display='none'; continue;} const m=mercXY(p.lat,p.lng); const s=worldToScreen(m.x,m.y); el.style.left=s.x+'px'; el.style.top=s.y+'px'; el.style.display=(s.x<-50||s.y<-50||s.x>cssW+50||s.y>cssH+50)?'none':'block'; el._lastPos=s; } }
 
