@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>Kartvaaler – OSM + kartbilde + GPS + POI (v12.1 clean)</title>
+<title>Kartvaaler – OSM + kartbilde + GPS + POI (v12.2 stable)</title>
 <style>
   html,body{margin:0;height:100%;overflow:hidden;background:#eaf0f4;overscroll-behavior:none}
   #ui{position:fixed;z-index:10;top:10px;left:10px;background:rgba(255,255,255,.95);padding:8px 10px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -93,7 +93,7 @@
 <script>
 (function(){
   // ----- versjon / status -----
-  const VERSION = 'v12.1 ' + new Date().toISOString().slice(0,16).replace('T',' ');
+  const VERSION = 'v12.2 ' + new Date().toISOString().slice(0,16).replace('T',' ');
   const statusEl = document.getElementById('status');
   const setStatus = (m)=> statusEl.textContent = m;
   document.getElementById('ver').textContent = VERSION;
@@ -186,7 +186,7 @@
 
   function render(){ const now=performance.now(); if(isInteracting){ const min=1000/30; if(now-lastFrame<min){ rafId=null; requestRender(); return; } } lastFrame=now; updateLabelVisibility(); ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,cssW,cssH); drawOSM(); drawTurkart(); if(!isInteracting) drawActivePath(); if(lastPos){ const sp=worldToScreen(lastPos.mx,lastPos.my); marker.style.left=sp.x+'px'; marker.style.top=sp.y+'px'; marker.hidden=false; if(lastPos.acc){ const pxR=lastPos.acc*scale; accCircle.style.width=(pxR*2)+'px'; accCircle.style.height=(pxR*2)+'px'; accCircle.style.left=sp.x+'px'; accCircle.style.top=sp.y+'px'; accCircle.hidden=false; } } updatePOIPositions(); }
 
-  // ----- gestures -----
+  // ----- gester -----
   let pointers=new Map(), isPanning=false, panStartCenter=null, panStartPt=null; let pinchStartDist=0, pinchStartScale=1, pinchStartWorld=null, isPinching=false; let lastTapTime=0, lastTapPos=null; let draggingPoiId=null, suppressClickUntil=0; let popupManualPos=null;
 
   gestureTarget.addEventListener('pointerdown', (e)=>{
