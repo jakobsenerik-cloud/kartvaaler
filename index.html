@@ -146,6 +146,10 @@
 
   const statusEl = document.getElementById('status');
   const setStatus = (m)=> statusEl.textContent = m;
+  setStatus('Init…');
+  // Fange JS-feil til status-felt
+  window.addEventListener('error', e => { setStatus('JS-feil: ' + (e.message||'ukjent') + (e.filename?(' @ '+e.filename+':'+e.lineno+':'+e.colno):'')); });
+  window.addEventListener('unhandledrejection', e => { const r = e.reason||{}; setStatus('Promise-feil: ' + (r.message||r)); });
   // Fange JS-feil til status-felt
   window.addEventListener('error', e => {
     setStatus('JS-feil: ' + (e.message||'ukjent') + (e.filename?(' @ '+e.filename+':'+e.lineno+':'+e.colno):''));
@@ -253,7 +257,16 @@
   function scheduleRefine(){ if (refineTimer) clearTimeout(refineTimer); refineTimer = setTimeout(()=>{ currentGrid = GRID_FINE; ctx.imageSmoothingEnabled = true; requestRender(); }, REFINE_DELAY); }
 
   function resize(){ const rect = canvas.getBoundingClientRect(); cssW = canvas.width = Math.round(rect.width); cssH = canvas.height= Math.round(rect.height); requestRender(); updatePOIPositions(); if (!poiPopup.hidden && popupManualPos){ const p = clampPopup(popupManualPos.x, popupManualPos.y); poiPopup.style.left = Math.round(p.x)+'px'; poiPopup.style.top = Math.round(p.y)+'px'; popupManualPos = p; } }
-  new ResizeObserver(resize).observe(document.getElementById('map'));
+  (function(){
+    const mapEl = document.getElementById('map');
+    if (window.ResizeObserver){
+      try{ new ResizeObserver(resize).observe(mapEl); }
+      catch{ window.addEventListener('resize', resize); setInterval(resize, 1500); }
+    } else {
+      window.addEventListener('resize', resize);
+      setInterval(resize, 1500);
+    }
+  })();
 
   function fitView(){ const xs = cornersM.map(p=>p.x), ys = cornersM.map(p=>p.y); const minX=Math.min(...xs), maxX=Math.max(...xs); const minY=Math.min(...ys), maxY=Math.max(...ys); const pad = 0.08; const neededScaleX = (cssW*(1-pad*2)) / (maxX-minX); const neededScaleY = (cssH*(1-pad*2)) / (maxY-minY); scale = Math.min(neededScaleX, neededScaleY); center.x = (minX+maxX)/2; center.y = (minY+maxY)/2; requestRender(); updatePOIPositions(); }
 
@@ -264,7 +277,20 @@
   const tileCache = new Map();
   let tileOk=0, tileFail=0;
   const tileUrl = (z,x,y)=> `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
-  function getTile(z,x,y){ const n = 1<<z; x = ((x % n) + n) % n; if (y<0 || y>=n) return null; const key = `${z}/${x}/${y}`; let im = tileCache.get(key); if (!im){ im = new Image(); im.crossOrigin = 'anonymous'; im.src = tileUrl(z,x,y); im.onload = ()=>{ tileOk++; requestRender(); }; im.onerror = ()=>{ tileFail++; if (tileFail===8) setStatus('Klarte ikke å laste OSM-fliser – nett/blokkert?'); }; tileCache.set(key, im); } return im.complete ? im : null; }
+  function getTile(z,x,y){
+    const n = 1<<z; x = ((x % n) + n) % n; if (y<0 || y>=n) return null;
+    const key = `${z}/${x}/${y}`;
+    let im = tileCache.get(key);
+    if (!im){
+      im = new Image();
+      // Viktig: ikke sett crossOrigin – flere flis-tjenere tillater ikke CORS og vil blokke lastingen
+      im.src = tileUrl(z,x,y);
+      im.onload = ()=>{ tileOk++; requestRender(); };
+      im.onerror = ()=>{ tileFail++; if (tileFail===8) setStatus('Klarte ikke å laste OSM-fliser – nett/blokkert?'); };
+      tileCache.set(key, im);
+    }
+    return im.complete ? im : null;
+  }/${x}/${y}`; let im = tileCache.get(key); if (!im){ im = new Image(); im.crossOrigin = 'anonymous'; im.src = tileUrl(z,x,y); im.onload = ()=>{ tileOk++; requestRender(); }; im.onerror = ()=>{ tileFail++; if (tileFail===8) setStatus('Klarte ikke å laste OSM-fliser – nett/blokkert?'); }; tileCache.set(key, im); } return im.complete ? im : null; }
   function mercToWorldPx(mx,my,z){ const S = 256 * (1<<z); const u = (mx + Math.PI*R) / TWO_PI_R; const v = (Math.PI*R - my) / TWO_PI_R; return { px: u*S, py: v*S }; }
   function drawOSM(){ let z = Math.round(Math.log2(scale * TWO_PI_R / 256)); z = Math.max(0, Math.min(19, z)); const S = 256 * (1<<z); const mpp = TWO_PI_R / S; const spw = scale * mpp; const c = mercToWorldPx(center.x, center.y, z); const halfW = cssW / spw / 2; const halfH = cssH / spw / 2; const minPx = c.px - halfW, maxPx = c.px + halfW; const minPy = c.py - halfH, maxPy = c.py + halfH; const minTx = Math.floor(minPx/256), maxTx = Math.floor(maxPx/256); const minTy = Math.floor(minPy/256), maxTy = Math.floor(maxPy/256);
     // bakgrunnsfyll i tilfelle fliser ikke kommer
@@ -635,6 +661,8 @@
   resize();
   fitView();
   requestRender();
+  // ekstra: prøv en gang til etter første layout
+  setTimeout(()=>{ resize(); fitView(); requestRender(); setStatus('Klar (bakgrunn bør nå vises)'); }, 250);
 
 })();
 </script>
