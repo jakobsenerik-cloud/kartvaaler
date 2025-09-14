@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
-<title>Kartvaaler – Rollback + POI (Leaflet classic, stabil)</title>
+<title>Kartvaaler – Rollback (Leaflet stabil) + POI fra pois.json</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
 <style>
   html, body { height: 100%; margin: 0; background:#eaf0f4; }
@@ -42,15 +42,12 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <script>
 (function(){
-  const VERSION='rollback+poi ' + new Date().toISOString().slice(0,16).replace('T',' ');
+  const VERSION='rollback-json ' + new Date().toISOString().slice(0,16).replace('T',' ');
   const statusEl=document.getElementById('status');
   const setStatus=(m)=> statusEl.textContent=m;
   document.getElementById('ver').textContent=VERSION;
   window.addEventListener('error', e=> setStatus('JS-feil: '+(e.message||'ukjent')));
   window.addEventListener('unhandledrejection', e=>{const r=e.reason||{}; setStatus('Promise-feil: '+(r.message||r));});
-
-  // --- data (innebygd) ---
-  const POIS = [{"id":"p1","title":"Gapahuk","lat":59.4685,"lng":10.9365,"category":"turmål","desc":"Enkel gapahuk med bålplass. Fint utsiktspunkt."},{"id":"p3","title":"Utsiktspunkt","lat":59.4568,"lng":10.9582,"category":"turmål","desc":"Utsikt over vika.","link":"https://example.com/utsikt"},{"id":"p1757705205324","title":"Nytt punkt","lat":59.475191699914554,"lng":10.974123372893677,"category":"","desc":""},{"id":"p1757705209018","title":"Nytt punkt","lat":59.464434,"lng":10.779567,"category":"","desc":""},{"id":"p1757705393758","title":"Nytt punkt","lat":59.46425311365443,"lng":10.780044905755304,"category":"","desc":""},{"id":"p1757754978541","title":"Lars varde","lat":59.465738559796485,"lng":10.980573311753572,"category":"Utsiktspunkt","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757754991386","title":"Spiralen","lat":59.46560788701329,"lng":10.980699698533066,"category":"Utsiktspunkt","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757755094777","title":"Varde","lat":59.46574055119602,"lng":10.980508399980014,"category":"Utsiktspunkt","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757755706071","title":"Turmål","lat":59.45796664569131,"lng":10.844839476960254,"category":"Turmål","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757763703597","title":"Sted","lat":59.50272161077502,"lng":10.840388821115905,"category":"Interessepunkt","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803651199","title":"F barely","lat":59.49219792699634,"lng":10.838976231629495,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803662567","title":"F grønt","lat":59.4939828659889,"lng":10.839685984143733,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803674158","title":"F ok","lat":59.49394675748732,"lng":10.839107049096222,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803686330","title":"F tett","lat":59.49416571657343,"lng":10.838912360015826,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803738639","title":"T","lat":59.49449896401655,"lng":10.838124692576314,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803746330","title":"T","lat":59.494731630930745,"lng":10.838266610579192,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803753887","title":"T","lat":59.4948756955999,"lng":10.83837658605695,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803775617","title":"S","lat":59.494874865548334,"lng":10.838396317037167,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803787076","title":"S","lat":59.49491570785487,"lng":10.838465800706333,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803802391","title":"S","lat":59.49510130678607,"lng":10.838581120787333,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803821704","title":"L","lat":59.49520417708529,"lng":10.838661456906628,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803831329","title":"L","lat":59.49528058799907,"lng":10.838639048019827,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803839937","title":"L","lat":59.49527620693099,"lng":10.838584994931408,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803851300","title":"V","lat":59.49533627977876,"lng":10.838726650128222,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803864277","title":"V","lat":59.49537625730549,"lng":10.838805258100573,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803873810","title":"V","lat":59.4954843116579,"lng":10.838849087934947,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803884513","title":"E","lat":59.49557686111718,"lng":10.83885568490696,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803896153","title":"E","lat":59.495674727687516,"lng":10.838865407602263,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803906118","title":"E","lat":59.49577709008719,"lng":10.838896679165275,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803916879","title":"R","lat":59.49588095764758,"lng":10.838911729496879,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803926749","title":"R","lat":59.4960160757456,"lng":10.838920976277018,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803936590","title":"R","lat":59.49612014622746,"lng":10.838951908954665,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803947130","title":"Dessverre","lat":59.496170857291625,"lng":10.838974954649701,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757803959392","title":"Dessverre","lat":59.49627057984746,"lng":10.838987842953144,"category":"","desc":"","color":"#09ff05","link":"","image":""},{"id":"p1757833386043","title":"Turforslag: Svarttjern rundt","lat":59.4639,"lng":10.9807,"category":"Turforslag","desc":"En kort og fin runde rundt vannet.","color":"#3b82f6","path":[[59.4639,10.9807],[59.4628,10.9821],[59.4621,10.9837],[59.4629,10.9849],[59.4642,10.9841],[59.4650,10.9825],[59.4644,10.9813],[59.4639,10.9807]]},{"id":"p1757834017123","title":"P: skogsvei","lat":59.46683580391216,"lng":10.97812786711084,"category":"Parkering","desc":"","color":"#0ea5e9","link":"","image":""},{"id":"p1757834049191","title":"P: sør","lat":59.45959069378614,"lng":10.985338140101075,"category":"Parkering","desc":"","color":"#0ea5e9","link":"","image":""},{"id":"p1757834066354","title":"Utsikt","lat":59.46508365762609,"lng":10.984182307768183,"category":"Utsiktspunkt","desc":"","color":"#8b5cf6","link":"","image":""},{"id":"p1757834083346","title":"Badeplass","lat":59.459132238897536,"lng":10.980340515878513,"category":"Badeplass","desc":"","color":"#06b6d4","link":"","image":""},{"id":"p1757834098959","title":"Husmannsplass","lat":59.45990326888591,"lng":10.977278470212452,"category":"Husmannsplass","desc":"","color":"#92400e","link":"","image":""},{"id":"p1757834123472","title":"Kulturminne","lat":59.46134251470004,"lng":10.977703662495633,"category":"Kulturminne","desc":"","color":"#b91c1c","link":"","image":""},{"id":"p1757834142768","title":"Interessepunkt","lat":59.46236530907771,"lng":10.97950258092341,"category":"Interessepunkt","desc":"","color":"#14b8a6","link":"","image":""},{"id":"p1757834158425","title":"Matbutikk","lat":59.45786839979072,"lng":10.986619854430143,"category":"Matbutikk","desc":"","color":"#22c55e","link":"","image":""},{"id":"p1757834175707","title":"Båtslipp","lat":59.45975622842604,"lng":10.99613034287238,"category":"Båtslipp","desc":"","color":"#0284c7","link":"","image":""},{"id":"p1757834194682","title":"Aktivitet","lat":59.4631883775577,"lng":10.991371655751005,"category":"Aktivitet","desc":"","color":"#f97316","link":"","image":""},{"id":"p1757834208620","title":"Bensinstasjon","lat":59.46729004889702,"lng":10.992606438494698,"category":"Bensinstasjon","desc":"","color":"#ef4444","link":"","image":""},{"id":"p1757834230209","title":"Parkering","lat":59.46533542626366,"lng":10.988046617333666,"category":"Parkering","desc":"","color":"#0ea5e9","link":"","image":""},{"id":"p1757834247301","title":"Interessepunkt","lat":59.46574802322956,"lng":10.989748691558085,"category":"Interessepunkt","desc":"","color":"#14b8a6","link":"","image":""},{"id":"p1757834261932","title":"Utsiktspunkt","lat":59.466079271532166,"lng":10.993743735841125,"category":"Utsiktspunkt","desc":"","color":"#8b5cf6","link":"","image":""},{"id":"p1757834277089","title":"Kulturminne","lat":59.46721077498835,"lng":10.9964700281081,"category":"Kulturminne","desc":"","color":"#b91c1c","link":"","image":""},{"id":"p1757834292087","title":"Matbutikk","lat":59.46820987696507,"lng":10.99680573641503,"category":"Matbutikk","desc":"","color":"#22c55e","link":"","image":""},{"id":"p1757834310361","title":"Aktivitet","lat":59.47100491922751,"lng":10.999919884274133,"category":"Aktivitet","desc":"","color":"#f97316","link":"","image":""},{"id":"p1757834326544","title":"Båtslipp","lat":59.471194168092324,"lng":11.00092201733119,"category":"Båtslipp","desc":"","color":"#0284c7","link":"","image":""},{"id":"p1757834341091","title":"Bensinstasjon","lat":59.47120946311194,"lng":11.00512744140625,"category":"Bensinstasjon","desc":"","color":"#ef4444","link":"","image":""},{"id":"p1757834360402","title":"Parkering","lat":59.470654936455534,"lng":11.006636410088745,"category":"Parkering","desc":"","color":"#0ea5e9","link":"","image":""},{"id":"p1757834376902","title":"Utsiktspunkt","lat":59.47019020741891,"lng":11.009178373143593,"category":"Utsiktspunkt","desc":"","color":"#8b5cf6","link":"","image":""},{"id":"p1757834390810","title":"Kulturminne","lat":59.46947644420651,"lng":11.01095050573349,"category":"Kulturminne","desc":"","color":"#b91c1c","link":"","image":""},{"id":"p1757834403901","title":"Matbutikk","lat":59.46884548224654,"lng":11.012892305850983,"category":"Matbutikk","desc":"","color":"#22c55e","link":"","image":""},{"id":"p1757834419689","title":"Aktivitet","lat":59.467812996978664,"lng":11.016377955675125,"category":"Aktivitet","desc":"","color":"#f97316","link":"","image":""},{"id":"p1757834433456","title":"Båtslipp","lat":59.46740281635174,"lng":11.017568200826645,"category":"Båtslipp","desc":"","color":"#0284c7","link":"","image":""}] ;
 
   // --- konfig ---
   const IMAGE_URL='Turkart.png?v='+Date.now();
@@ -62,8 +59,15 @@
     [59.387167906588274, 10.756945610046387]
   ];
 
-  // --- Leaflet-basiskart ---
-  const map=L.map('map', { zoomControl:true, zoomAnimation:true, fadeAnimation:true });
+  // --- Leaflet-basiskart (animasjon AV for å hindre drifting av kartbildet) ---
+  const map=L.map('map', {
+    zoomControl:true,
+    zoomAnimation:false,
+    fadeAnimation:false,
+    inertia:true,
+    wheelDebounceTime: 30,
+    wheelPxPerZoomLevel: 120
+  });
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '© OpenStreetMap-bidragsytere'
@@ -103,7 +107,7 @@
 
   function renderWarp(){ if(!imgW||!imgH) return; resizeCanvas(); ctx.save(); ctx.clearRect(0,0,canvas.width,canvas.height); ctx.globalAlpha=parseFloat(opacity.value||'0.95');
     const [NW,NE,SE,SW]=CORNERS_LL.map(ll=>toPt(ll));
-    const COLS=20, ROWS=20; // stabilt og pen kvalitet
+    const COLS=22, ROWS=22; // fin kvalitet
     for(let j=0;j<ROWS;j++){
       const v0=j/ROWS, v1=(j+1)/ROWS;
       const L0=lerpPt(NW,SW,v0), R0=lerpPt(NE,SE,v0);
@@ -129,7 +133,8 @@
     ctx.restore();
   }
 
-  map.on('move zoom resize', renderWarp);
+  // Tegn kun på rolig bevegelser for stabilitet
+  map.on('moveend zoomend resize', renderWarp);
   // start synlig utsnitt
   fitView();
 
@@ -150,10 +155,11 @@
   document.getElementById('centerMe').onclick=centerMe;
   document.getElementById('stopWatch').onclick=stopWatch;
 
-  // --- POI visning (lesevisning, stabil) ---
+  // --- POI (hentes fra pois.json i samme mappe) ---
   const poiToggle=document.getElementById('poiToggle');
   const poiLayer=L.layerGroup().addTo(map);
   const routeLines=new Map();
+  let POIS=[];
 
   function colorForCategory(cat){
     const key=(cat||'').toString().toLowerCase();
@@ -202,9 +208,14 @@
   function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
   function escapeAttr(s){ return String(s||'').replace(/\"/g,'&quot;'); }
 
-  buildPOIs();
+  // Last fra pois.json i repoet
+  fetch('pois.json?v='+Date.now(), {cache:'no-store'})
+    .then(r=> r.ok ? r.json() : [])
+    .then(arr=>{ if(Array.isArray(arr)) { POIS=arr; buildPOIs(); setStatus('Klar (POI: '+arr.length+')'); } else { setStatus('Klar (0 POI)'); } })
+    .catch(()=>{ setStatus('Klar (fant ikke pois.json)'); });
 
-  poiToggle.addEventListener('change', ()=>{
+  // Toggle lag
+  document.getElementById('poiToggle').addEventListener('change', ()=>{
     if(poiToggle.checked) poiLayer.addTo(map); else poiLayer.remove();
   });
 
