@@ -146,6 +146,13 @@
 
   const statusEl = document.getElementById('status');
   const setStatus = (m)=> statusEl.textContent = m;
+  // Fange JS-feil til status-felt
+  window.addEventListener('error', e => {
+    setStatus('JS-feil: ' + (e.message||'ukjent') + (e.filename?(' @ '+e.filename+':'+e.lineno+':'+e.colno):''));
+  });
+  window.addEventListener('unhandledrejection', e => {
+    const r = e.reason||{}; setStatus('Promise-feil: ' + (r.message||r));
+  });
 
   const canvas = document.getElementById('canvas');
   const ctx = canvas.getContext('2d', {alpha:false});
@@ -311,7 +318,7 @@
 
   // ---- last bildet ----
   img.onload = ()=>{ imgW = img.naturalWidth; imgH = img.naturalHeight; resize(); fitView(); setStatus('Klar'); };
-  img.onerror = ()=> setStatus('Klarte ikke å laste Turkart.png (må ligge i samme mappe som index.html)');
+  img.onerror = ()=> { setStatus('Klarte ikke å laste Turkart.png (må ligge i samme mappe som index.html)'); resize(); requestRender(); };
   img.src = IMAGE_URL;
 
   // ---- UI: knapper ----
@@ -612,6 +619,8 @@
 
   // init
   buildPOIMarkers();
+  // sørg for at vi tegner bakgrunn selv om bildet ikke er klart enda
+  resize(); requestRender();
 
 })();
 </script>
