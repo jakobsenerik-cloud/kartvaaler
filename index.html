@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
-<title>Kartvaaler – Rollback (Leaflet stabil) + POI fra pois.json</title>
+<title>Kartvaaler – Rollback (Leaflet stabil) + POI fra pois.json — v12.3</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
 <style>
   html, body { height: 100%; margin: 0; background:#eaf0f4; }
@@ -42,7 +42,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <script>
 (function(){
-  const VERSION='rollback-json ' + new Date().toISOString().slice(0,16).replace('T',' ');
+  const VERSION='rollback-json v12.3 ' + new Date().toISOString().slice(0,16).replace('T',' ');
   const statusEl=document.getElementById('status');
   const setStatus=(m)=> statusEl.textContent=m;
   document.getElementById('ver').textContent=VERSION;
@@ -105,9 +105,9 @@
   const opacity=document.getElementById('opacity');
   opacity.addEventListener('input', ()=> renderWarp());
 
-  function renderWarp(){ if(!imgW||!imgH) return; resizeCanvas(); ctx.save(); ctx.clearRect(0,0,canvas.width,canvas.height); ctx.globalAlpha=parseFloat(opacity.value||'0.95');
+  function renderWarp(quick=false){ if(!imgW||!imgH) return; resizeCanvas(); ctx.save(); ctx.clearRect(0,0,canvas.width,canvas.height); ctx.globalAlpha=parseFloat(opacity.value||'0.95');
     const [NW,NE,SE,SW]=CORNERS_LL.map(ll=>toPt(ll));
-    const COLS=22, ROWS=22; // fin kvalitet
+    const COLS= quick? 8 : 22, ROWS= quick? 8 : 22; // raskt under pan/zoom, fint ellers
     for(let j=0;j<ROWS;j++){
       const v0=j/ROWS, v1=(j+1)/ROWS;
       const L0=lerpPt(NW,SW,v0), R0=lerpPt(NE,SE,v0);
@@ -116,13 +116,13 @@
         const u0=i/COLS, u1=(i+1)/COLS;
         const Q00=lerpPt(L0,R0,u0), Q10=lerpPt(L0,R0,u1);
         const Q01=lerpPt(L1,R1,u0), Q11=lerpPt(L1,R1,u1);
-        // tri 1: 00-10-11
+        // tri 1
         ctx.save(); ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q10.x,Q10.y); ctx.lineTo(Q11.x,Q11.y); ctx.closePath(); ctx.clip();
         const S00={x:u0*imgW, y:v0*imgH}, S10={x:u1*imgW, y:v0*imgH}, S11={x:u1*imgW, y:v1*imgH};
         setTriTransform(ctx,S00,S10,S11,Q00,Q10,Q11);
         ctx.drawImage(img,0,0);
         ctx.restore();
-        // tri 2: 00-11-01
+        // tri 2
         ctx.save(); ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q11.x,Q11.y); ctx.lineTo(Q01.x,Q01.y); ctx.closePath(); ctx.clip();
         const S01={x:u0*imgW, y:v1*imgH};
         setTriTransform(ctx,S00,S11,S01,Q00,Q11,Q01);
@@ -133,8 +133,12 @@
     ctx.restore();
   }
 
-  // Tegn kun på rolig bevegelser for stabilitet
-  map.on('moveend zoomend resize', renderWarp);
+  // Tegn raskt under pan/zoom for å hindre «skliing», full kvalitet når bevegelse stopper
+  let rafPending=false; function requestQuick(){ if(rafPending) return; rafPending=true; requestAnimationFrame(()=>{ rafPending=false; renderWarp(true); }); }
+  map.on('move', requestQuick);
+  map.on('zoom', requestQuick);
+  map.on('moveend zoomend resize', ()=> renderWarp(false));
+
   // start synlig utsnitt
   fitView();
 
@@ -191,16 +195,17 @@
       m.bindPopup(parts.join(''));
 
       if(Array.isArray(p.path) && p.path.length>=2){
-        m.on('popupopen', ()=>{
+        const showLine=()=>{
           if(routeLines.has(p.id)) return;
           const latlngs = p.path.map(pt=> Array.isArray(pt)&&pt.length===2 ? L.latLng(pt[0],pt[1]) : null).filter(Boolean);
           const line=L.polyline(latlngs, { color: color, weight:9, opacity:0.5, lineJoin:'round', lineCap:'round' }).addTo(map);
           routeLines.set(p.id, line);
-        });
-        m.on('popupclose', ()=>{
-          const line=routeLines.get(p.id);
-          if(line) { map.removeLayer(line); routeLines.delete(p.id); }
-        });
+        };
+        const hideLine=()=>{ const line=routeLines.get(p.id); if(line){ map.removeLayer(line); routeLines.delete(p.id);} };
+        m.on('popupopen', showLine);
+        m.on('popupclose', hideLine);
+        m.on('mouseover', showLine);
+        m.on('mouseout', hideLine);
       }
     }
   }
