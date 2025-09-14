@@ -29,7 +29,8 @@
   .poi-marker:hover .lbl, .poi-marker:focus-within .lbl, .poi-marker.dragging .lbl{opacity:1; visibility:visible; transform:translateX(0);} 
   .poi-marker.touchflash .lbl{opacity:1; visibility:visible; transform:translateX(0);} 
   /* POI-popup/editor */
-  #poiPopup{position:absolute; z-index:6; max-width:320px; background:#fff; border:1px solid #e5e7eb; border-radius:10px; box-shadow:0 12px 30px rgba(0,0,0,.15); padding:10px; pointer-events:auto}
+  #poiPopup{position:absolute; z-index:6; max-width:320px; background:#fff; border:1px solid #e5e7eb; border-radius:10px; box-shadow:0 12px 30px rgba(0,0,0,.15); padding:10px; pointer-events:auto; max-height:70vh; overflow:auto}
+  #poiPopup .handle{cursor:move; user-select:none; -webkit-user-select:none; touch-action:none; font-size:12px; color:#374151; background:#f3f4f6; border:1px solid #e5e7eb; border-radius:6px; padding:4px 8px; margin:0 24px 8px 0; display:inline-block}
   #poiPopup h3{margin:0 0 6px;font-size:16px}
   #poiPopup p{margin:0 0 8px;font-size:14px}
   #poiPopup img{max-width:100%; border-radius:8px; display:block; margin:6px 0}
@@ -95,9 +96,10 @@
     <div id="accCircle" hidden></div>
 
     <div id="poiLayer"></div>
-    <div id="poiPopup" hidden>
-      <button class="close" title="Lukk" aria-label="Lukk">×</button>
-      <div class="content"></div>
+    <div id=\"poiPopup\" hidden>
+      <button class=\"close\" title=\"Lukk\" aria-label=\"Lukk\">×</button>
+      <div class=\"handle\" id=\"poiHandle\" title=\"Dra for å flytte\">⇕ Flytt</div>
+      <div class=\"content\"></div>
     </div>
   </div>
 
@@ -158,6 +160,8 @@
   const poiPopup = document.getElementById('poiPopup');
   const poiContent = poiPopup.querySelector('.content');
   const poiClose = poiPopup.querySelector('.close');
+  const poiHandle = document.getElementById('poiHandle');
+  let popupManualPos = null;
   const poiToggle = document.getElementById('poiToggle');
   const poiSearch = document.getElementById('poiSearch');
 
@@ -241,7 +245,7 @@
   function enterFastMode(){ currentGrid = GRID_FAST; ctx.imageSmoothingEnabled = false; }
   function scheduleRefine(){ if (refineTimer) clearTimeout(refineTimer); refineTimer = setTimeout(()=>{ currentGrid = GRID_FINE; ctx.imageSmoothingEnabled = true; requestRender(); }, REFINE_DELAY); }
 
-  function resize(){ const rect = canvas.getBoundingClientRect(); cssW = canvas.width = Math.round(rect.width); cssH = canvas.height= Math.round(rect.height); requestRender(); updatePOIPositions(); }
+  function resize(){ const rect = canvas.getBoundingClientRect(); cssW = canvas.width = Math.round(rect.width); cssH = canvas.height= Math.round(rect.height); requestRender(); updatePOIPositions(); if (!poiPopup.hidden && popupManualPos){ const p = clampPopup(popupManualPos.x, popupManualPos.y); poiPopup.style.left = Math.round(p.x)+'px'; poiPopup.style.top = Math.round(p.y)+'px'; popupManualPos = p; } }
   new ResizeObserver(resize).observe(document.getElementById('map'));
 
   function fitView(){ const xs = cornersM.map(p=>p.x), ys = cornersM.map(p=>p.y); const minX=Math.min(...xs), maxX=Math.max(...xs); const minY=Math.min(...ys), maxY=Math.max(...ys); const pad = 0.08; const neededScaleX = (cssW*(1-pad*2)) / (maxX-minX); const neededScaleY = (cssH*(1-pad*2)) / (maxY-minY); scale = Math.min(neededScaleX, neededScaleY); center.x = (minX+maxX)/2; center.y = (minY+maxY)/2; requestRender(); updatePOIPositions(); }
@@ -398,8 +402,13 @@
 
   function val(sel){ return poiContent.querySelector(sel).value.trim(); }
   function closePOIPopup(){ poiPopup.hidden = true; }
-  function positionPopupNear(pt){ const w=320; const h=240; let x = pt.x + 14, y = pt.y - h - 16; if (y < 10) y = pt.y + 18; if (x + w > cssW - 10) x = cssW - w - 10; if (x < 10) x = 10; poiPopup.style.left = Math.round(x)+'px'; poiPopup.style.top  = Math.round(y)+'px'; }
-  poiClose.addEventListener('click', closePOIPopup); document.addEventListener('keydown', e=>{ if(e.key==='Escape') closePOIPopup(); }); canvas.addEventListener('click', ()=> closePOIPopup());
+  function clampPopup(x,y,w,h){ const pad=10; const rect = poiPopup.getBoundingClientRect(); w = w || rect.width || 320; h = h || rect.height || 240; x = Math.max(pad, Math.min(cssW - w - pad, x)); y = Math.max(pad, Math.min(cssH - h - pad, y)); return {x,y}; }
+  function positionPopupNear(pt, force=false){ let x, y; const rect = poiPopup.getBoundingClientRect(); const w = rect.width||320, h = rect.height||240; if (!force && popupManualPos){ ({x,y} = clampPopup(popupManualPos.x, popupManualPos.y, w, h)); } else { if(!pt) pt={x:cssW/2,y:cssH/2}; x = pt.x + 14; y = pt.y - h - 16; if (y < 10) y = pt.y + 18; ({x,y} = clampPopup(x,y,w,h)); popupManualPos = {x,y}; } poiPopup.style.left = Math.round(x)+'px'; poiPopup.style.top = Math.round(y)+'px'; }
+  poiClose.addEventListener('click', closePOIPopup);
+  // dra-flytting av popup
+  (function enablePopupDrag(){ if (!poiHandle) return; let dragging=false, offX=0, offY=0; const move=(e)=>{ if(!dragging) return; let x = e.clientX - offX; let y = e.clientY - offY; const p = clampPopup(x,y); poiPopup.style.left = Math.round(p.x)+'px'; poiPopup.style.top = Math.round(p.y)+'px'; popupManualPos = p; };
+    const up=()=>{ dragging=false; window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    poiHandle.addEventListener('pointerdown', (e)=>{ e.preventDefault(); const rect = poiPopup.getBoundingClientRect(); offX = e.clientX - rect.left; offY = e.clientY - rect.top; dragging=true; window.addEventListener('pointermove', move, {passive:false}); window.addEventListener('pointerup', up, {once:true}); }); })(); document.addEventListener('keydown', e=>{ if(e.key==='Escape') closePOIPopup(); }); canvas.addEventListener('click', ()=> closePOIPopup());
 
   poiToggle.addEventListener('change', ()=>{ updatePOIPositions(); closePOIPopup(); }); poiSearch.addEventListener('input', ()=>{ updatePOIPositions(); });
 
