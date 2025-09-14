@@ -214,6 +214,8 @@
 
   // ---- POI ----
   let POIS=[]; const poiElems=new Map();
+  // Legg til manglende globale variabler for sti/aktivt punkt
+  let activePathPoiId = null, drawPathForId = null;
   function colorForCategory(cat){ const key=(cat||'').toString().toLowerCase(); const map={ 'parkering':'#0ea5e9','badeplass':'#06b6d4','utsiktspunkt':'#8b5cf6','husmannsplass':'#92400e','båtslipp':'#0284c7','matbutikk':'#22c55e','bensinstasjon':'#ef4444','aktivitet':'#f97316','kulturminne':'#b91c1c','interessepunkt':'#14b8a6','turforslag':'#3b82f6','turmål':'#22c55e' }; return map[key]||'#6b7280'; }
   function colorForPOI(p){ return p.color || colorForCategory(p.category||'poi'); }
   function iconForPOI(p){ const color=colorForPOI(p); return '<svg width="24" height="24" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><path d="M14 1 C8 1 4 5.5 4 10.5 c0 6.5 8 13 10 16 2-3 10-9.5 10-16 C24 5.5 20 1 14 1z" fill="'+color+'" stroke="white" stroke-width="2"/><circle cx="14" cy="11" r="3.5" fill="white"/></svg>'; }
@@ -296,3 +298,4 @@
 </script>
 </body>
 </html>
+
