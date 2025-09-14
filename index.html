@@ -137,9 +137,9 @@
   // Zoom- og warp-innstillinger
   const MIN_SCALE = 0.01, MAX_SCALE = 8000;
   const GRID_FINE = {cols:24, rows:24};
-  const GRID_FAST = {cols:8, rows:8};
+  const GRID_FAST = {cols:5, rows:5};
   let currentGrid = GRID_FINE;
-  const REFINE_DELAY = 140; // ms etter input-stopp før fin tegning
+  const REFINE_DELAY = 220; // ms etter input-stopp før fin tegning
 
   const R = 6378137, TWO_PI_R = 2*Math.PI*R;
 
@@ -266,7 +266,7 @@
   function quadOffscreen(q0,q1,q2,q3){ const minx = Math.min(q0.x,q1.x,q2.x,q3.x); const maxx = Math.max(q0.x,q1.x,q2.x,q3.x); const miny = Math.min(q0.y,q1.y,q2.y,q3.y); const maxy = Math.max(q0.y,q1.y,q2.y,q3.y); return (maxx < 0 || maxy < 0 || minx > cssW || miny > cssH); }
   function drawTurkart(){ if (!img.complete || !imgW) return; ctx.save(); ctx.globalAlpha = parseFloat(opacityInput.value||"0.95"); const pNW = worldToScreen(cornersM[0].x,cornersM[0].y); const pNE = worldToScreen(cornersM[1].x,cornersM[1].y); const pSE = worldToScreen(cornersM[2].x,cornersM[2].y); const pSW = worldToScreen(cornersM[3].x,cornersM[3].y); const COLS = currentGrid.cols, ROWS = currentGrid.rows; for(let j=0;j<ROWS;j++){ const v0=j/ROWS, v1=(j+1)/ROWS; const L0=lerpPt(pNW,pSW,v0), R0=lerpPt(pNE,pSE,v0); const L1=lerpPt(pNW,pSW,v1), R1=lerpPt(pNE,pSE,v1); for(let i=0;i<COLS;i++){ const u0=i/COLS, u1=(i+1)/COLS; const Q00=lerpPt(L0,R0,u0), Q10=lerpPt(L0,R0,u1); const Q01=lerpPt(L1,R1,u0), Q11=lerpPt(L1,R1,u1); if (quadOffscreen(Q00,Q10,Q11,Q01)) continue; const S00={x:u0*imgW,y:v0*imgH}, S10={x:u1*imgW,y:v0*imgH}; const S01={x:u0*imgW,y:v1*imgH}, S11={x:u1*imgW,y:v1*imgH}; ctx.save(); ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q10.x,Q10.y); ctx.lineTo(Q11.x,Q11.y); ctx.closePath(); ctx.clip(); setTriTransform(ctx, S00,S10,S11, Q00,Q10,Q11); ctx.drawImage(img,0,0); ctx.restore(); ctx.save(); ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q11.x,Q11.y); ctx.lineTo(Q01.x,Q01.y); ctx.closePath(); ctx.clip(); setTriTransform(ctx, S00,S11,S01, Q00,Q11,Q01); ctx.drawImage(img,0,0); ctx.restore(); } } ctx.restore(); }
 
-  function drawActivePath(){ if (!activePathPoiId) return; const p = POIS.find(x=>x.id===activePathPoiId); if (!p || !Array.isArray(p.path) || p.path.length < 2) return; const col = colorForPOI(p); const {r,g,b} = hexToRgb(col); ctx.save(); ctx.lineWidth = 4; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.strokeStyle = `rgba(${r},${g},${b},0.5)`; ctx.beginPath(); for (let i=0;i<p.path.length;i++){ const ll = p.path[i]; const m = mercXY(ll[0], ll[1]); const s = worldToScreen(m.x, m.y); if (i===0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y); } ctx.stroke(); ctx.restore(); }
+  function drawActivePath(){ if (!activePathPoiId) return; const p = POIS.find(x=>x.id===activePathPoiId); if (!p || !Array.isArray(p.path) || p.path.length < 2) return; const col = colorForPOI(p); const {r,g,b} = hexToRgb(col); ctx.save(); ctx.lineWidth = 6; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.strokeStyle = `rgba(${r},${g},${b},0.5)`; ctx.beginPath(); for (let i=0;i<p.path.length;i++){ const ll = p.path[i]; const m = mercXY(ll[0], ll[1]); const s = worldToScreen(m.x, m.y); if (i===0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y); } ctx.stroke(); ctx.restore(); }
 
   function render(){ ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,cssW,cssH); drawOSM(); drawTurkart(); drawActivePath(); if (lastPos){ const sp = worldToScreen(lastPos.mx,lastPos.my); marker.style.left = sp.x + 'px'; marker.style.top  = sp.y + 'px'; marker.hidden = false; if (lastPos.acc){ const pxR = lastPos.acc * scale; accCircle.style.width = (pxR*2)+'px'; accCircle.style.height= (pxR*2)+'px'; accCircle.style.left = sp.x + 'px'; accCircle.style.top  = sp.y + 'px'; accCircle.hidden = false; } } updatePOIPositions(); }
 
