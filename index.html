@@ -261,12 +261,44 @@
   function drawOSM(){ let z = Math.round(Math.log2(scale * TWO_PI_R / 256)); z = Math.max(0, Math.min(19, z)); const S = 256 * (1<<z); const mpp = TWO_PI_R / S; const spw = scale * mpp; const c = mercToWorldPx(center.x, center.y, z); const halfW = cssW / spw / 2; const halfH = cssH / spw / 2; const minPx = c.px - halfW, maxPx = c.px + halfW; const minPy = c.py - halfH, maxPy = c.py + halfH; const minTx = Math.floor(minPx/256), maxTx = Math.floor(maxPx/256); const minTy = Math.floor(minPy/256), maxTy = Math.floor(maxPy/256); for (let ty=minTy; ty<=maxTy; ty++){ for (let tx=minTx; tx<=maxTx; tx++){ const im = getTile(z, tx, ty); if (!im) continue; const tilePx = tx*256, tilePy = ty*256; const sx = (tilePx - c.px)*spw + cssW/2; const sy = (tilePy - c.py)*spw + cssH/2; const s = 256*spw; ctx.drawImage(im, sx, sy, s, s); } } }
 
   // --------- Warp av Turkart ----------
+  let activePathPoiId = null; // vis sti kun når dette punktet er åpent
+  let drawPathForId = null;   // redigeringsmodus for stitegning
+
+  function drawActivePath(){
+    if (!activePathPoiId) return;
+    const p = POIS.find(x=>x.id===activePathPoiId);
+    if (!p || !Array.isArray(p.path) || p.path.length < 2) return;
+    const col = colorForPOI(p);
+    const {r,g,b} = hexToRgb(col);
+    ctx.save();
+    ctx.lineWidth = 4;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = `rgba(${r},${g},${b},0.5)`; // 50% opasitet
+    ctx.beginPath();
+    for (let i=0;i<p.path.length;i++){
+      const ll = p.path[i];
+      const m = mercXY(ll[0], ll[1]);
+      const s = worldToScreen(m.x, m.y);
+      if (i===0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
   function setTriTransform(ctx, s0,s1,s2, d0,d1,d2){ const a11=s1.x-s0.x, a12=s2.x-s0.x, a21=s1.y-s0.y, a22=s2.y-s0.y; const det=a11*a22-a12*a21; if(Math.abs(det)<1e-12){ctx.setTransform(1,0,0,1,0,0);return;} const inv11=a22/det, inv12=-a12/det, inv13=-(inv11*s0.x+inv12*s0.y); const inv21=-a21/det, inv22=a11/det, inv23=-(inv21*s0.x+inv22*s0.y); const b11=d1.x-d0.x, b12=d2.x-d0.x, b13=d0.x; const b21=d1.y-d0.y, b22=d2.y-d0.y, b23=d0.y; const A=b11*inv11+b12*inv21, B=b21*inv11+b22*inv21; const C=b11*inv12+b12*inv22, D=b21*inv12+b22*inv22; const E=b11*inv13+b12*inv23+b13, F=b21*inv13+b22*inv23+b23; ctx.setTransform(A,B,C,D,E,F); }
   const lerp=(a,b,t)=>a+(b-a)*t; const lerpPt=(p,q,t)=>({x:lerp(p.x,q.x,t), y:lerp(p.y,q.y,t)});
   function quadOffscreen(q0,q1,q2,q3){ const minx = Math.min(q0.x,q1.x,q2.x,q3.x); const maxx = Math.max(q0.x,q1.x,q2.x,q3.x); const miny = Math.min(q0.y,q1.y,q2.y,q3.y); const maxy = Math.max(q0.y,q1.y,q2.y,q3.y); return (maxx < 0 || maxy < 0 || minx > cssW || miny > cssH); }
   function drawTurkart(){ if (!img.complete || !imgW) return; ctx.save(); ctx.globalAlpha = parseFloat(opacityInput.value||"0.95"); const pNW = worldToScreen(cornersM[0].x,cornersM[0].y); const pNE = worldToScreen(cornersM[1].x,cornersM[1].y); const pSE = worldToScreen(cornersM[2].x,cornersM[2].y); const pSW = worldToScreen(cornersM[3].x,cornersM[3].y); const COLS = currentGrid.cols, ROWS = currentGrid.rows; for(let j=0;j<ROWS;j++){ const v0=j/ROWS, v1=(j+1)/ROWS; const L0=lerpPt(pNW,pSW,v0), R0=lerpPt(pNE,pSE,v0); const L1=lerpPt(pNW,pSW,v1), R1=lerpPt(pNE,pSE,v1); for(let i=0;i<COLS;i++){ const u0=i/COLS, u1=(i+1)/COLS; const Q00=lerpPt(L0,R0,u0), Q10=lerpPt(L0,R0,u1); const Q01=lerpPt(L1,R1,u0), Q11=lerpPt(L1,R1,u1); if (quadOffscreen(Q00,Q10,Q11,Q01)) continue; const S00={x:u0*imgW,y:v0*imgH}, S10={x:u1*imgW,y:v0*imgH}; const S01={x:u0*imgW,y:v1*imgH}, S11={x:u1*imgW,y:v1*imgH}; ctx.save(); ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q10.x,Q10.y); ctx.lineTo(Q11.x,Q11.y); ctx.closePath(); ctx.clip(); setTriTransform(ctx, S00,S10,S11, Q00,Q10,Q11); ctx.drawImage(img,0,0); ctx.restore(); ctx.save(); ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q11.x,Q11.y); ctx.lineTo(Q01.x,Q01.y); ctx.closePath(); ctx.clip(); setTriTransform(ctx, S00,S11,S01, Q00,Q11,Q01); ctx.drawImage(img,0,0); ctx.restore(); } } ctx.restore(); }
 
-  function render(){ ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,cssW,cssH); drawOSM(); drawTurkart(); if (lastPos){ const sp = worldToScreen(lastPos.mx,lastPos.my); marker.style.left = sp.x + 'px'; marker.style.top  = sp.y + 'px'; marker.hidden = false; if (lastPos.acc){ const pxR = lastPos.acc * scale; accCircle.style.width = (pxR*2)+'px'; accCircle.style.height= (pxR*2)+'px'; accCircle.style.left = sp.x + 'px'; accCircle.style.top  = sp.y + 'px'; accCircle.hidden = false; } } updatePOIPositions(); }
+  function render(){
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.clearRect(0,0,cssW,cssH);
+    drawOSM();
+    drawTurkart();
+    drawActivePath();
+    if (lastPos){ const sp = worldToScreen(lastPos.mx,lastPos.my); marker.style.left = sp.x + 'px'; marker.style.top  = sp.y + 'px'; marker.hidden = false; if (lastPos.acc){ const pxR = lastPos.acc * scale; accCircle.style.width = (pxR*2)+'px'; accCircle.style.height= (pxR*2)+'px'; accCircle.style.left = sp.x + 'px'; accCircle.style.top  = sp.y + 'px'; accCircle.hidden = false; } }
+    updatePOIPositions();
+  }
 
   // ---- Gestures: pan, pinch, dbl-tap IN, two-finger tap OUT ----
   let pointers = new Map(); let isPanning=false, panStartCenter=null, panStartPt=null; let pinchStartDist=0, pinchStartScale=1, pinchStartWorld=null, isPinching=false; let lastTapTime=0, lastTapPos=null, twoTapTimer=null; let draggingPoiId=null, suppressClickUntil=0;
@@ -335,9 +367,12 @@
       'aktivitet':'#f97316',
       'kulturminne':'#b91c1c',
       'interessepunkt':'#14b8a6',
+      'turforslag':'#3b82f6',
       // alias / gamle kategorier
       'turmål':'#22c55e'
     };
+    return map[key] || '#6b7280';
+  };
     return map[key] || '#6b7280';
   }
   function colorForPOI(p){ return p.color || colorForCategory(p.category||'poi'); }
@@ -366,11 +401,98 @@
 
   function updatePOIPositions(){ const show = poiToggle.checked; const q = (poiSearch.value||'').trim().toLowerCase(); for (const p of POIS){ const el = poiElems.get(p.id); if (!el) continue; if (!show){ el.style.display='none'; continue; } const hit = !q || (p.title&&p.title.toLowerCase().includes(q)) || (p.desc&&p.desc.toLowerCase().includes(q)) || (p.category&&p.category.toLowerCase().includes(q)); if (!hit){ el.style.display='none'; continue; } const m = mercXY(p.lat, p.lng); const s = worldToScreen(m.x, m.y); el.style.left = s.x+'px'; el.style.top  = s.y+'px'; el.style.display = (s.x<-50||s.y<-50||s.x>cssW+50||s.y>cssH+50) ? 'none' : 'block'; el._lastPos = s; } }
 
-  function openPOIPopup(p, screenPt){ const parts = []; parts.push(`<h3>${escapeHtml(p.title||'Punkt')}</h3>`); if (p.image) parts.push(`<img src="${encodeURI(p.image)}" alt="">`); if (p.desc) parts.push(`<p>${escapeHtml(p.desc)}</p>`); const meta = [`Kategori: ${escapeHtml(p.category||'—')}`, `Lat/Lng: ${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`]; if (p.link) meta.push(`<a href="${escapeURITrusted(p.link)}" target="_blank" rel="noopener">Mer info ↗</a>`); parts.push(`<div class="meta">${meta.join(' · ')}</div>`); if (editMode) parts.push(`<div class="actions"><button id="popupEdit">Rediger</button><button id="popupDelete" class="danger">Slett</button></div>`); poiContent.innerHTML = parts.join(''); poiPopup.hidden = false; positionPopupNear(screenPt); if (editMode){ poiContent.querySelector('#popupEdit').onclick=()=> openPOIEditor(p, screenPt); poiContent.querySelector('#popupDelete').onclick=()=> deletePOI(p); } }
+  function openPOIPopup(p, screenPt){
+    activePathPoiId = p.id; requestRender();
+    const parts = [];
+    parts.push(`<h3>${escapeHtml(p.title||'Punkt')}</h3>`);
+    if (p.image) parts.push(`<img src="${encodeURI(p.image)}" alt="">`);
+    if (p.desc) parts.push(`<p>${escapeHtml(p.desc)}</p>`);
+    const meta = [`Kategori: ${escapeHtml(p.category||'—')}`, `Lat/Lng: ${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`];
+    if (p.link) meta.push(`<a href="${escapeURITrusted(p.link)}" target="_blank" rel="noopener">Mer info ↗</a>`);
+    parts.push(`<div class="meta">${meta.join(' · ')}</div>`);
+    if (editMode) parts.push(`<div class="actions"><button id="popupEdit">Rediger</button><button id="popupDelete" class="danger">Slett</button></div>`);
+    poiContent.innerHTML = parts.join('');
+    poiPopup.hidden = false; positionPopupNear(screenPt);
+    if (editMode){ poiContent.querySelector('#popupEdit').onclick=()=> openPOIEditor(p, screenPt); poiContent.querySelector('#popupDelete').onclick=()=> deletePOI(p); }
+  }</h3>`); if (p.image) parts.push(`<img src="${encodeURI(p.image)}" alt="">`); if (p.desc) parts.push(`<p>${escapeHtml(p.desc)}</p>`); const meta = [`Kategori: ${escapeHtml(p.category||'—')}`, `Lat/Lng: ${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`]; if (p.link) meta.push(`<a href="${escapeURITrusted(p.link)}" target="_blank" rel="noopener">Mer info ↗</a>`); parts.push(`<div class="meta">${meta.join(' · ')}</div>`); if (editMode) parts.push(`<div class="actions"><button id="popupEdit">Rediger</button><button id="popupDelete" class="danger">Slett</button></div>`); poiContent.innerHTML = parts.join(''); poiPopup.hidden = false; positionPopupNear(screenPt); if (editMode){ poiContent.querySelector('#popupEdit').onclick=()=> openPOIEditor(p, screenPt); poiContent.querySelector('#popupDelete').onclick=()=> deletePOI(p); } }
 
-  function openPOIEditor(p, screenPt){ const cats = ['Parkering','Badeplass','Utsiktspunkt','Husmannsplass','Båtslipp','Matbutikk','Bensinstasjon','Aktivitet','Kulturminne','Interessepunkt']; const colorVal = colorForPOI(p); poiContent.innerHTML = `
-    <h3>Rediger punkt</h3>
-    <div class="row"><label>Tittel<br><input id="e_title" type="text" value="${escapeAttr(p.title||'')}"></label></div>
+  function openPOIEditor(p, screenPt){
+    activePathPoiId = p.id; requestRender();
+    const cats = ['Parkering','Badeplass','Utsiktspunkt','Husmannsplass','Båtslipp','Matbutikk','Bensinstasjon','Aktivitet','Kulturminne','Interessepunkt','Turforslag'];
+    const colorVal = colorForPOI(p);
+    const isRoute = (p.category||'').toLowerCase()==='turforslag';
+    const pathLen = calcPathLenKm(p.path||[]);
+    let routeBlock = '';
+    if (isRoute){
+      const pts = Array.isArray(p.path)? p.path.length : 0;
+      routeBlock = `
+      <div class="row" id="routeRow">
+        <div style="font-size:12px;color:#374151">Sti for dette turforslaget: <span id="e_pathinfo">${pts} punkter${pathLen?` · ${pathLen.toFixed(2)} km`:''}</span></div>
+      </div>
+      <div class="row">
+        <button id="e_draw">Tegn/fortsett sti</button>
+        <button id="e_done">Ferdig</button>
+        <button id="e_undo">Angre punkt</button>
+        <button id="e_clear" class="danger">Tøm sti</button>
+      </div>`;
+    }
+
+    poiContent.innerHTML = `
+      <h3>Rediger punkt</h3>
+      <div class="row"><label>Tittel<br><input id="e_title" type="text" value="${escapeAttr(p.title||'')}"></label></div>
+      <div class="row"><label>Kategori<br><input id="e_category" list="catlist" type="text" value="${escapeAttr(p.category||'')}"></label></div>
+      <div class="row"><label>Farge<br><input id="e_color" type="color" value="${escapeAttr(colorVal)}"></label></div>
+      ${routeBlock}
+      <div class="row"><label>Beskrivelse<br><textarea id="e_desc">${escapeHtml(p.desc||'')}</textarea></label></div>
+      <div class="row"><label>Lenke (URL)<br><input id="e_link" type="url" value="${escapeAttr(p.link||'')}"></label></div>
+      <div class="row"><label>Bilde (URL)<br><input id="e_image" type="url" value="${escapeAttr(p.image||'')}"></label></div>
+      <div class="row"><label>Lat<br><input id="e_lat" type="text" value="${p.lat}"></label><label>Lng<br><input id="e_lng" type="text" value="${p.lng}"></label></div>
+      <div class="actions">
+        <button id="e_save">Lagre</button>
+        <button id="e_center">Sentrer på punkt</button>
+        <button id="e_myloc">Sett til min posisjon</button>
+        <button id="e_delete" class="danger">Slett</button>
+      </div>
+      <datalist id="catlist">${cats.map(c=>`<option value="${c}">`).join('')}</datalist>
+    `;
+    poiPopup.hidden = false; positionPopupNear(screenPt);
+
+    const saveAndRefresh = ()=>{
+      p.title=val('#e_title');
+      p.category=val('#e_category');
+      p.color=val('#e_color')||undefined;
+      p.desc=val('#e_desc');
+      p.link=val('#e_link');
+      p.image=val('#e_image');
+      p.lat=parseFloat(val('#e_lat'));
+      p.lng=parseFloat(val('#e_lng'));
+      commitPOIChange(); buildPOIMarkers(); updatePOIPositions(); requestRender();
+      const elNew = poiElems.get(p.id);
+      if (elNew && elNew._lastPos) openPOIEditor(p, elNew._lastPos); else closePOIPopup();
+      setStatus('Lagret: '+(p.title||p.id));
+    };
+
+    poiContent.querySelector('#e_save').onclick = saveAndRefresh;
+    poiContent.querySelector('#e_center').onclick = ()=>{ const m=mercXY(p.lat,p.lng); center.x=m.x; center.y=m.y; requestRender(); scheduleRefine(); positionPopupNear(poiElems.get(p.id)._lastPos || screenPt); };
+    poiContent.querySelector('#e_myloc').onclick = ()=>{ if (!lastPos){ setStatus('Ingen GPS-posisjon ennå'); return; } const ll = invMercLL(lastPos.mx,lastPos.my); p.lat=ll.lat; p.lng=ll.lng; commitPOIChange(); updatePOIPositions(); openPOIEditor(p, poiElems.get(p.id)._lastPos || screenPt); };
+    poiContent.querySelector('#e_delete').onclick = ()=> deletePOI(p);
+
+    if (isRoute){
+      const infoEl = poiContent.querySelector('#e_pathinfo');
+      const refreshInfo = ()=>{ const km = calcPathLenKm(p.path||[]); infoEl.textContent = `${(p.path?p.path.length:0)} punkter${km?` · ${km.toFixed(2)} km`:''}`; };
+      const addPt = (lat,lng)=>{ if (!Array.isArray(p.path)) p.path=[]; p.path.push([lat,lng]); commitPOIChange(); requestRender(); refreshInfo(); };
+
+      const startDraw = ()=>{ drawPathForId = p.id; activePathPoiId = p.id; setStatus('Tegning: Trykk i kartet for å legge til punkter. Dobbelttrykk for å avslutte.'); };
+      const doneDraw  = ()=>{ drawPathForId = null; setStatus('Stitegning avsluttet'); };
+      const undoPt    = ()=>{ if (Array.isArray(p.path) && p.path.length>0){ p.path.pop(); commitPOIChange(); requestRender(); refreshInfo(); } };
+      const clearPath = ()=>{ if (confirm('Tømme hele stien?')){ p.path = []; commitPOIChange(); requestRender(); refreshInfo(); } };
+
+      poiContent.querySelector('#e_draw').onclick = startDraw;
+      poiContent.querySelector('#e_done').onclick = doneDraw;
+      poiContent.querySelector('#e_undo').onclick = undoPt;
+      poiContent.querySelector('#e_clear').onclick= clearPath;
+    }
+  }"></label></div>
     <div class="row"><label>Kategori<br><input id="e_category" list="catlist" type="text" value="${escapeAttr(p.category||'')}"></label></div>
     <div class="row"><label>Farge<br><input id="e_color" type="color" value="${escapeAttr(colorVal)}"></label></div>
     <div class="row"><label>Beskrivelse<br><textarea id="e_desc">${escapeHtml(p.desc||'')}</textarea></label></div>
@@ -401,14 +523,15 @@
   function deletePOI(p){ if (confirm('Slette punkt "'+(p.title||p.id)+'"?')){ POIS = POIS.filter(x=>x.id!==p.id); commitPOIChange(); buildPOIMarkers(); updatePOIPositions(); closePOIPopup(); } }
 
   function val(sel){ return poiContent.querySelector(sel).value.trim(); }
-  function closePOIPopup(){ poiPopup.hidden = true; }
+  function closePOIPopup(){ poiPopup.hidden = true; activePathPoiId = null; drawPathForId = null; requestRender(); }
   function clampPopup(x,y,w,h){ const pad=10; const rect = poiPopup.getBoundingClientRect(); w = w || rect.width || 320; h = h || rect.height || 240; x = Math.max(pad, Math.min(cssW - w - pad, x)); y = Math.max(pad, Math.min(cssH - h - pad, y)); return {x,y}; }
   function positionPopupNear(pt, force=false){ let x, y; const rect = poiPopup.getBoundingClientRect(); const w = rect.width||320, h = rect.height||240; if (!force && popupManualPos){ ({x,y} = clampPopup(popupManualPos.x, popupManualPos.y, w, h)); } else { if(!pt) pt={x:cssW/2,y:cssH/2}; x = pt.x + 14; y = pt.y - h - 16; if (y < 10) y = pt.y + 18; ({x,y} = clampPopup(x,y,w,h)); popupManualPos = {x,y}; } poiPopup.style.left = Math.round(x)+'px'; poiPopup.style.top = Math.round(y)+'px'; }
   poiClose.addEventListener('click', closePOIPopup);
   // dra-flytting av popup
   (function enablePopupDrag(){ if (!poiHandle) return; let dragging=false, offX=0, offY=0; const move=(e)=>{ if(!dragging) return; let x = e.clientX - offX; let y = e.clientY - offY; const p = clampPopup(x,y); poiPopup.style.left = Math.round(p.x)+'px'; poiPopup.style.top = Math.round(p.y)+'px'; popupManualPos = p; };
     const up=()=>{ dragging=false; window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
-    poiHandle.addEventListener('pointerdown', (e)=>{ e.preventDefault(); const rect = poiPopup.getBoundingClientRect(); offX = e.clientX - rect.left; offY = e.clientY - rect.top; dragging=true; window.addEventListener('pointermove', move, {passive:false}); window.addEventListener('pointerup', up, {once:true}); }); })(); document.addEventListener('keydown', e=>{ if(e.key==='Escape') closePOIPopup(); }); canvas.addEventListener('click', ()=> closePOIPopup());
+    poiHandle.addEventListener('pointerdown', (e)=>{ e.preventDefault(); const rect = poiPopup.getBoundingClientRect(); offX = e.clientX - rect.left; offY = e.clientY - rect.top; dragging=true; window.addEventListener('pointermove', move, {passive:false}); window.addEventListener('pointerup', up, {once:true}); }); })(); document.addEventListener('keydown', e=>{ if(e.key==='Escape') closePOIPopup(); }); canvas.addEventListener('click', (e)=>{ if (editMode && (addingMode || drawPathForId)) return; closePOIPopup(); });
+  canvas.addEventListener('dblclick', (e)=>{ if (drawPathForId){ drawPathForId = null; setStatus('Stitegning avsluttet'); } });
 
   poiToggle.addEventListener('change', ()=>{ updatePOIPositions(); closePOIPopup(); }); poiSearch.addEventListener('input', ()=>{ updatePOIPositions(); });
 
@@ -417,8 +540,25 @@
   editToggle.addEventListener('change', ()=> setEditMode(editToggle.checked));
   function setEditMode(on){ editMode = on; editBar.style.display = on ? 'inline-flex' : 'none'; editHint.textContent = on ? 'Tips: trykk en markør for å redigere. Dra for å flytte. Langt trykk (0,7 s) for å slette.' : ''; for (const [id,el] of poiElems){ el.classList.toggle('editable', on); } addingMode = false; addPoiBtn.textContent = 'Legg til punkt'; }
 
-  addPoiBtn.addEventListener('click', ()=>{ addingMode = !addingMode; addPoiBtn.textContent = addingMode ? 'Klikk i kartet… (avbryt)' : 'Legg til punkt'; editHint.textContent = addingMode ? 'Trykk i kartet der punktet skal ligge' : ' '; });
-  canvas.addEventListener('click', e=>{ if (!editMode || !addingMode) return; const rect = canvas.getBoundingClientRect(); const sx = e.clientX - rect.left, sy = e.clientY - rect.top; const w = screenToWorld(sx, sy); const ll = invMercLL(w.mx, w.my); const id = 'p'+Date.now(); const p = { id, title:'Nytt punkt', lat:ll.lat, lng:ll.lng, category:'', desc:'' }; POIS.push(p); commitPOIChange(); buildPOIMarkers(); updatePOIPositions(); addingMode=false; addPoiBtn.textContent='Legg til punkt'; openPOIEditor(p, poiElems.get(p.id)._lastPos || {x:sx,y:sy}); });
+  addPoiBtn.addEventListener('click', ()=>{ addingMode = !addingMode; drawPathForId = null; addPoiBtn.textContent = addingMode ? 'Klikk i kartet… (avbryt)' : 'Legg til punkt'; editHint.textContent = addingMode ? 'Trykk i kartet der punktet skal ligge' : ' '; });
+  canvas.addEventListener('click', e=>{
+    if (editMode && drawPathForId){
+      const rect = canvas.getBoundingClientRect();
+      const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+      const w = screenToWorld(sx, sy); const ll = invMercLL(w.mx, w.my);
+      const p = POIS.find(x=>x.id===drawPathForId);
+      if (p){ if (!Array.isArray(p.path)) p.path=[]; p.path.push([ll.lat, ll.lng]); commitPOIChange(); requestRender(); const info = poiContent.querySelector('#e_pathinfo'); if (info){ const km = calcPathLenKm(p.path||[]); info.textContent = `${p.path.length} punkter${km?` · ${km.toFixed(2)} km`:''}`; } }
+      return;
+    }
+    if (!editMode || !addingMode) return;
+    const rect = canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+    const w = screenToWorld(sx, sy); const ll = invMercLL(w.mx, w.my);
+    const id = 'p'+Date.now();
+    const p = { id, title:'Nytt punkt', lat:ll.lat, lng:ll.lng, category:'', desc:'' };
+    POIS.push(p); commitPOIChange(); buildPOIMarkers(); updatePOIPositions(); addingMode=false; addPoiBtn.textContent='Legg til punkt';
+    openPOIEditor(p, poiElems.get(p.id)?(poiElems.get(p.id)._lastPos):{x:sx,y:sy});
+  });
 
   function enableDragIfEdit(el, p){
     let started=false, moveHandler=null, upHandler=null, downX=0, downY=0;
@@ -464,6 +604,8 @@
   saveGitHubBtn.addEventListener('click', openGhModal);
 
   // hjelpefunksjoner
+  function calcPathLenKm(path){ if (!Array.isArray(path) || path.length<2) return 0; let d=0; for(let i=1;i<path.length;i++){ d += haversine(path[i-1][0],path[i-1][1], path[i][0], path[i][1]); } return d/1000; }
+  function haversine(lat1,lon1,lat2,lon2){ const Rm=6371000; const toR=(d)=>d*Math.PI/180; const dlat=toR(lat2-lat1), dlon=toR(lon2-lon1); const a=Math.sin(dlat/2)**2 + Math.cos(toR(lat1))*Math.cos(toR(lat2))*Math.sin(dlon/2)**2; return 2*Rm*Math.asin(Math.sqrt(a)); }
   function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
   function escapeAttr(s){ return String(s).replace(/"/g,'&quot;'); }
   function escapeURITrusted(u){ try{ const url=new URL(u, location.href); return url.href; }catch{ return '#'; } }
