@@ -262,10 +262,21 @@
 
   // --------- OSM tiles ----------
   const tileCache = new Map();
+  let tileOk=0, tileFail=0;
   const tileUrl = (z,x,y)=> `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
-  function getTile(z,x,y){ const n = 1<<z; x = ((x % n) + n) % n; if (y<0 || y>=n) return null; const key = `${z}/${x}/${y}`; let im = tileCache.get(key); if (!im){ im = new Image(); im.crossOrigin = "anonymous"; im.src = tileUrl(z,x,y); im.onload = ()=>requestRender(); tileCache.set(key, im); } return im.complete ? im : null; }
+  function getTile(z,x,y){ const n = 1<<z; x = ((x % n) + n) % n; if (y<0 || y>=n) return null; const key = `${z}/${x}/${y}`; let im = tileCache.get(key); if (!im){ im = new Image(); im.crossOrigin = 'anonymous'; im.src = tileUrl(z,x,y); im.onload = ()=>{ tileOk++; requestRender(); }; im.onerror = ()=>{ tileFail++; if (tileFail===8) setStatus('Klarte ikke å laste OSM-fliser – nett/blokkert?'); }; tileCache.set(key, im); } return im.complete ? im : null; }
   function mercToWorldPx(mx,my,z){ const S = 256 * (1<<z); const u = (mx + Math.PI*R) / TWO_PI_R; const v = (Math.PI*R - my) / TWO_PI_R; return { px: u*S, py: v*S }; }
-  function drawOSM(){ let z = Math.round(Math.log2(scale * TWO_PI_R / 256)); z = Math.max(0, Math.min(19, z)); const S = 256 * (1<<z); const mpp = TWO_PI_R / S; const spw = scale * mpp; const c = mercToWorldPx(center.x, center.y, z); const halfW = cssW / spw / 2; const halfH = cssH / spw / 2; const minPx = c.px - halfW, maxPx = c.px + halfW; const minPy = c.py - halfH, maxPy = c.py + halfH; const minTx = Math.floor(minPx/256), maxTx = Math.floor(maxPx/256); const minTy = Math.floor(minPy/256), maxTy = Math.floor(maxPy/256); for (let ty=minTy; ty<=maxTy; ty++){ for (let tx=minTx; tx<=maxTx; tx++){ const im = getTile(z, tx, ty); if (!im) continue; const tilePx = tx*256, tilePy = ty*256; const sx = (tilePx - c.px)*spw + cssW/2; const sy = (tilePy - c.py)*spw + cssH/2; const s = 256*spw; ctx.drawImage(im, sx, sy, s, s); } } }
+  function drawOSM(){ let z = Math.round(Math.log2(scale * TWO_PI_R / 256)); z = Math.max(0, Math.min(19, z)); const S = 256 * (1<<z); const mpp = TWO_PI_R / S; const spw = scale * mpp; const c = mercToWorldPx(center.x, center.y, z); const halfW = cssW / spw / 2; const halfH = cssH / spw / 2; const minPx = c.px - halfW, maxPx = c.px + halfW; const minPy = c.py - halfH, maxPy = c.py + halfH; const minTx = Math.floor(minPx/256), maxTx = Math.floor(maxPx/256); const minTy = Math.floor(minPy/256), maxTy = Math.floor(maxPy/256);
+    // bakgrunnsfyll i tilfelle fliser ikke kommer
+    ctx.save(); ctx.fillStyle = '#e8eef2'; ctx.fillRect(0,0,cssW,cssH); ctx.restore();
+    for (let ty=minTy; ty<=maxTy; ty++){
+      for (let tx=minTx; tx<=maxTx; tx++){
+        const im = getTile(z, tx, ty);
+        if (!im) continue;
+        const tilePx = tx*256, tilePy = ty*256; const sx = (tilePx - c.px)*spw + cssW/2; const sy = (tilePy - c.py)*spw + cssH/2; const s = 256*spw; ctx.drawImage(im, sx, sy, s, s);
+      }
+    }
+  } } }
 
   // --------- Warp av Turkart ----------
   let activePathPoiId = null; // vis sti kun når dette punktet er åpent
@@ -317,15 +328,16 @@
   canvas.addEventListener('wheel', e=>{ e.preventDefault(); enterFastMode(); const factor = Math.pow(1.0015, -e.deltaY); const pos = {x:e.clientX, y:e.clientY}; const world = screenToWorld(pos.x, pos.y); scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale * factor)); center.x = world.mx - (pos.x - cssW/2)/scale; center.y = (pos.y - cssH/2)/scale + world.my; requestRender(); scheduleRefine(); }, {passive:false});
 
   // ---- last bildet ----
-  img.onload = ()=>{ imgW = img.naturalWidth; imgH = img.naturalHeight; resize(); fitView(); setStatus('Klar'); };
-  img.onerror = ()=> { setStatus('Klarte ikke å laste Turkart.png (må ligge i samme mappe som index.html)'); resize(); requestRender(); };
+  img.onload = ()=>{ imgW = img.naturalWidth; imgH = img.naturalHeight; // Bildet er klart, men vi har allerede satt utsnitt
+  setStatus('Klar'); requestRender(); };
+  img.onerror = ()=> { setStatus('Klarte ikke å laste Turkart.png (må ligge i samme mappe som index.html)'); requestRender(); };
   img.src = IMAGE_URL;
 
   // ---- UI: knapper ----
   document.getElementById('fitBtn').onclick = fitView; opacityInput.oninput = ()=> requestRender();
   document.getElementById('zoomIn').onclick  = ()=>{ enterFastMode(); const p={x:cssW/2,y:cssH/2}; const w=screenToWorld(p.x,p.y); scale = Math.min(MAX_SCALE, scale * 1.3); center.x = w.mx - (p.x - cssW/2)/scale; center.y = (p.y - cssH/2)/scale + w.my; requestRender(); scheduleRefine(); };
   document.getElementById('zoomOut').onclick = ()=>{ enterFastMode(); const p={x:cssW/2,y:cssH/2}; const w=screenToWorld(p.x,p.y); scale = Math.max(MIN_SCALE, scale / 1.3); center.x = w.mx - (p.x - cssW/2)/scale; center.y = (p.y - cssH/2)/scale + w.my; requestRender(); scheduleRefine(); };
-  document.getElementById('zoomFullOut').onclick = ()=>{ enterFastMode(); const p={x:cssW/2,y:cssH/2}; const w=screenToWorld(p.x,p.y); scale = MIN_SCALE; center.x = w.mx - (p.x - cssW/2)/scale; center.y = (p.y - cssH/2)/scale + w.my; requestRender(); scheduleRefine(); };
+  document.getElementById('zoomFullOut').onclick = ()=>{ enterFastMode(); const p={x:cssW/2,y:cssH/2}; const w=screenToWorld(p.x,p.y); scale = MIN_SCALE; center.x = w.mx - (p.x - cssW/2)/scale; center.y = (p.y - cssH/2)/scale + w.my; requestRender(); scheduleRefine(); setStatus(`Zoom: ${Math.round(Math.log2(scale*TWO_PI_R/256))}`); }; const p={x:cssW/2,y:cssH/2}; const w=screenToWorld(p.x,p.y); scale = MIN_SCALE; center.x = w.mx - (p.x - cssW/2)/scale; center.y = (p.y - cssH/2)/scale + w.my; requestRender(); scheduleRefine(); };
 
   // ---- GPS / dråpe ----
   let watchId=null, lastPos=null; const GPS_COLOR_DEFAULT = '#2563eb';
@@ -619,8 +631,10 @@
 
   // init
   buildPOIMarkers();
-  // sørg for at vi tegner bakgrunn selv om bildet ikke er klart enda
-  resize(); requestRender();
+  // Sett størrelse og utsnitt umiddelbart, før bildet er klart
+  resize();
+  fitView();
+  requestRender();
 
 })();
 </script>
