@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
-<title>Kartvaaler – Rollback (Leaflet stabil) + POI fra pois.json — v12.3</title>
+<title>Kartvaaler – Rollback ROUTE OK (Leaflet classic, stabil, v12.0)</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
 <style>
   html, body { height: 100%; margin: 0; background:#eaf0f4; }
@@ -15,12 +15,9 @@
   input[type=range]{ width:120px }
   button{ padding:6px 10px; border:1px solid #d0d7de; border-radius:8px; background:#fff; cursor:pointer }
   .leaflet-container { background:#e8eef2; }
-  /* GPS-stil */
   .gps-drop { width:28px; height:28px; transform: translate(-14px,-26px); }
   .gps-acc { color:#2563eb; }
-  /* Canvas warp pane */
   .warp-pane canvas { position:absolute; left:0; top:0; }
-  /* POI */
   .poi-icon svg { display:block }
   .leaflet-tooltip.mytooltip { background:rgba(255,255,255,.95); border:1px solid #e5e7eb; color:#111827; border-radius:6px; box-shadow:0 6px 16px rgba(0,0,0,.12); }
   .leaflet-tooltip.mytooltip::before { border-top-color:#e5e7eb; }
@@ -42,7 +39,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <script>
 (function(){
-  const VERSION='rollback-json v12.3 ' + new Date().toISOString().slice(0,16).replace('T',' ');
+  const VERSION='rollback-route-ok v12.0 ' + new Date().toISOString().slice(0,16).replace('T',' ');
   const statusEl=document.getElementById('status');
   const setStatus=(m)=> statusEl.textContent=m;
   document.getElementById('ver').textContent=VERSION;
@@ -59,21 +56,11 @@
     [59.387167906588274, 10.756945610046387]
   ];
 
-  // --- Leaflet-basiskart (animasjon AV for å hindre drifting av kartbildet) ---
-  const map=L.map('map', {
-    zoomControl:true,
-    zoomAnimation:false,
-    fadeAnimation:false,
-    inertia:true,
-    wheelDebounceTime: 30,
-    wheelPxPerZoomLevel: 120
-  });
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '© OpenStreetMap-bidragsytere'
-  }).addTo(map);
+  // --- Leaflet-basiskart (animasjon AV for stabilitet) ---
+  const map=L.map('map', { zoomControl:true, zoomAnimation:false, fadeAnimation:false });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap-bidragsytere' }).addTo(map);
 
-  // --- egendefinert canvas-warp layer oppå overlayPane ---
+  // --- canvas warp overlegg ---
   const warpPane=map.createPane('warp');
   warpPane.classList.add('warp-pane');
   const canvas=document.createElement('canvas');
@@ -105,9 +92,9 @@
   const opacity=document.getElementById('opacity');
   opacity.addEventListener('input', ()=> renderWarp());
 
-  function renderWarp(quick=false){ if(!imgW||!imgH) return; resizeCanvas(); ctx.save(); ctx.clearRect(0,0,canvas.width,canvas.height); ctx.globalAlpha=parseFloat(opacity.value||'0.95');
+  function renderWarp(){ if(!imgW||!imgH) return; resizeCanvas(); ctx.save(); ctx.clearRect(0,0,canvas.width,canvas.height); ctx.globalAlpha=parseFloat(opacity.value||'0.95');
     const [NW,NE,SE,SW]=CORNERS_LL.map(ll=>toPt(ll));
-    const COLS= quick? 8 : 22, ROWS= quick? 8 : 22; // raskt under pan/zoom, fint ellers
+    const COLS=20, ROWS=20; // stabil og pen
     for(let j=0;j<ROWS;j++){
       const v0=j/ROWS, v1=(j+1)/ROWS;
       const L0=lerpPt(NW,SW,v0), R0=lerpPt(NE,SE,v0);
@@ -116,13 +103,13 @@
         const u0=i/COLS, u1=(i+1)/COLS;
         const Q00=lerpPt(L0,R0,u0), Q10=lerpPt(L0,R0,u1);
         const Q01=lerpPt(L1,R1,u0), Q11=lerpPt(L1,R1,u1);
-        // tri 1
+        // tri 1: 00-10-11
         ctx.save(); ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q10.x,Q10.y); ctx.lineTo(Q11.x,Q11.y); ctx.closePath(); ctx.clip();
         const S00={x:u0*imgW, y:v0*imgH}, S10={x:u1*imgW, y:v0*imgH}, S11={x:u1*imgW, y:v1*imgH};
         setTriTransform(ctx,S00,S10,S11,Q00,Q10,Q11);
         ctx.drawImage(img,0,0);
         ctx.restore();
-        // tri 2
+        // tri 2: 00-11-01
         ctx.save(); ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q11.x,Q11.y); ctx.lineTo(Q01.x,Q01.y); ctx.closePath(); ctx.clip();
         const S01={x:u0*imgW, y:v1*imgH};
         setTriTransform(ctx,S00,S11,S01,Q00,Q11,Q01);
@@ -133,16 +120,10 @@
     ctx.restore();
   }
 
-  // Tegn raskt under pan/zoom for å hindre «skliing», full kvalitet når bevegelse stopper
-  let rafPending=false; function requestQuick(){ if(rafPending) return; rafPending=true; requestAnimationFrame(()=>{ rafPending=false; renderWarp(true); }); }
-  map.on('move', requestQuick);
-  map.on('zoom', requestQuick);
-  map.on('moveend zoomend resize', ()=> renderWarp(false));
-
-  // start synlig utsnitt
+  map.on('move zoom resize', renderWarp);
   fitView();
 
-  // --- GPS med Leaflet ---
+  // --- GPS (Leaflet) ---
   const dropIcon=L.divIcon({ className:'poi-icon', html:`<svg class="gps-drop" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><path d="M14 1 C8 1 4 5.5 4 10.5 c0 6.5 8 13 10 16 2-3 10-9.5 10-16 C24 5.5 20 1 14 1z" fill="#2563eb" stroke="white" stroke-width="2"/><circle cx="14" cy="11" r="4" fill="white"/></svg>` });
   let userMarker=null, accCircle=null, watchId=null;
   function showUser(lat,lng,acc){ const ll=L.latLng(lat,lng); if(!userMarker){ userMarker=L.marker(ll,{icon:dropIcon}).addTo(map); } else userMarker.setLatLng(ll);
@@ -159,24 +140,25 @@
   document.getElementById('centerMe').onclick=centerMe;
   document.getElementById('stopWatch').onclick=stopWatch;
 
-  // --- POI (hentes fra pois.json i samme mappe) ---
+  // --- POI innebygd (inkl. turforslag med rute som VIRKER) ---
+  const POIS = [
+    {"id":"p1757833386043","title":"Turforslag: Svarttjern rundt","lat":59.4639,"lng":10.9807,"category":"Turforslag","color":"#3b82f6","desc":"En kort og fin runde rundt vannet.",
+      "path":[[59.4639,10.9807],[59.4628,10.9821],[59.4621,10.9837],[59.4629,10.9849],[59.4642,10.9841],[59.4650,10.9825],[59.4644,10.9813],[59.4639,10.9807]]},
+    {"id":"p1757834017123","title":"P: skogsvei","lat":59.46683580391216,"lng":10.97812786711084,"category":"Parkering","color":"#0ea5e9"},
+    {"id":"p1757834066354","title":"Utsikt","lat":59.46508365762609,"lng":10.984182307768183,"category":"Utsiktspunkt","color":"#8b5cf6"},
+    {"id":"p1757834083346","title":"Badeplass","lat":59.459132238897536,"lng":10.980340515878513,"category":"Badeplass","color":"#06b6d4"}
+  ];
+
   const poiToggle=document.getElementById('poiToggle');
   const poiLayer=L.layerGroup().addTo(map);
   const routeLines=new Map();
-  let POIS=[];
 
   function colorForCategory(cat){
     const key=(cat||'').toString().toLowerCase();
-    const mapC={ 
-      'parkering':'#0ea5e9','badeplass':'#06b6d4','utsiktspunkt':'#8b5cf6','husmannsplass':'#92400e','båtslipp':'#0284c7',
-      'matbutikk':'#22c55e','bensinstasjon':'#ef4444','aktivitet':'#f97316','kulturminne':'#b91c1c','interessepunkt':'#14b8a6',
-      'turforslag':'#3b82f6','turmål':'#22c55e','': '#6b7280'
-    };
+    const mapC={ 'parkering':'#0ea5e9','badeplass':'#06b6d4','utsiktspunkt':'#8b5cf6','husmannsplass':'#92400e','båtslipp':'#0284c7','matbutikk':'#22c55e','bensinstasjon':'#ef4444','aktivitet':'#f97316','kulturminne':'#b91c1c','interessepunkt':'#14b8a6','turforslag':'#3b82f6','turmål':'#22c55e','': '#6b7280' };
     return mapC[key]||'#6b7280';
   }
-  function iconHtml(color){
-    return `<svg width="24" height="24" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><path d="M14 1 C8 1 4 5.5 4 10.5 c0 6.5 8 13 10 16 2-3 10-9.5 10-16 C24 5.5 20 1 14 1z" fill="${color}" stroke="white" stroke-width="2"/><circle cx="14" cy="11" r="3.5" fill="white"/></svg>`;
-  }
+  function iconHtml(color){ return `<svg width="24" height="24" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><path d="M14 1 C8 1 4 5.5 4 10.5 c0 6.5 8 13 10 16 2-3 10-9.5 10-16 C24 5.5 20 1 14 1z" fill="${color}" stroke="white" stroke-width="2"/><circle cx="14" cy="11" r="3.5" fill="white"/></svg>`; }
   function mkIcon(color){ return L.divIcon({ className:'poi-icon', html:iconHtml(color), iconSize:[24,24], iconAnchor:[12,22] }); }
 
   function buildPOIs(){
@@ -188,41 +170,29 @@
       if(p.title) m.bindTooltip(p.title, { direction:'top', opacity:0.95, offset:[0,-18], className:'mytooltip' });
       const parts=[];
       parts.push(`<h3 style="margin:0 0 6px">${escapeHtml(p.title||'Punkt')}</h3>`);
-      if(p.image) parts.push(`<img src="${escapeAttr(p.image)}" style="max-width:240px;border-radius:8px;display:block;margin:6px 0">`);
       if(p.desc) parts.push(`<div style="margin:0 0 8px">${escapeHtml(p.desc)}</div>`);
       parts.push(`<div style="font-size:12px;color:#374151">Kategori: ${escapeHtml(p.category||'—')} · Lat/Lng: ${(p.lat||0).toFixed(5)}, ${(p.lng||0).toFixed(5)}</div>`);
-      if(p.link) parts.push(`<div style="margin-top:6px"><a href="${escapeAttr(p.link)}" target="_blank" rel="noopener">Mer info ↗</a></div>`);
       m.bindPopup(parts.join(''));
 
       if(Array.isArray(p.path) && p.path.length>=2){
-        const showLine=()=>{
+        m.on('popupopen', ()=>{
           if(routeLines.has(p.id)) return;
-          const latlngs = p.path.map(pt=> Array.isArray(pt)&&pt.length===2 ? L.latLng(pt[0],pt[1]) : null).filter(Boolean);
+          const latlngs = p.path.map(pt=> L.latLng(pt[0],pt[1]));
           const line=L.polyline(latlngs, { color: color, weight:9, opacity:0.5, lineJoin:'round', lineCap:'round' }).addTo(map);
           routeLines.set(p.id, line);
-        };
-        const hideLine=()=>{ const line=routeLines.get(p.id); if(line){ map.removeLayer(line); routeLines.delete(p.id);} };
-        m.on('popupopen', showLine);
-        m.on('popupclose', hideLine);
-        m.on('mouseover', showLine);
-        m.on('mouseout', hideLine);
+        });
+        m.on('popupclose', ()=>{
+          const line=routeLines.get(p.id);
+          if(line) { map.removeLayer(line); routeLines.delete(p.id); }
+        });
       }
     }
   }
 
   function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
-  function escapeAttr(s){ return String(s||'').replace(/\"/g,'&quot;'); }
 
-  // Last fra pois.json i repoet
-  fetch('pois.json?v='+Date.now(), {cache:'no-store'})
-    .then(r=> r.ok ? r.json() : [])
-    .then(arr=>{ if(Array.isArray(arr)) { POIS=arr; buildPOIs(); setStatus('Klar (POI: '+arr.length+')'); } else { setStatus('Klar (0 POI)'); } })
-    .catch(()=>{ setStatus('Klar (fant ikke pois.json)'); });
-
-  // Toggle lag
-  document.getElementById('poiToggle').addEventListener('change', ()=>{
-    if(poiToggle.checked) poiLayer.addTo(map); else poiLayer.remove();
-  });
+  buildPOIs();
+  poiToggle.addEventListener('change', ()=>{ if(poiToggle.checked) poiLayer.addTo(map); else poiLayer.remove(); });
 
 })();
 </script>
