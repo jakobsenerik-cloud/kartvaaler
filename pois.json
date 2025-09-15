@@ -34,12 +34,12 @@
   },
   {
     "id": "p1757705850094",
-    "title": "Badeplass, utsettingsplass for båt/kano/kajakk",
+    "title": "Rød hytteområde",
     "lat": 59.46039457453535,
     "lng": 10.76963573454026,
-    "category": "Aktivitet",
+    "category": "Interessepunkt",
     "desc": "",
-    "color": "#f79307",
+    "color": "#03f8fc",
     "link": "",
     "image": ""
   },
@@ -61,7 +61,7 @@
     "lng": 10.786234718342879,
     "category": "Interessepunkt",
     "desc": "",
-    "color": "#fa2b7c",
+    "color": "#03f8fc",
     "link": "",
     "image": ""
   },
@@ -650,7 +650,7 @@
     "lng": 10.880241887802969,
     "category": "Interessepunkt",
     "desc": "",
-    "color": "#f92a79",
+    "color": "#03f8fc",
     "link": "",
     "image": ""
   },
@@ -2560,7 +2560,7 @@
     "id": "p1757953010151",
     "title": "Myhreåsen hytteområde.",
     "category": "Interessepunkt",
-    "color": "#fd2c7c",
+    "color": "#03f8fc",
     "lat": 59.41384425097605,
     "lng": 11.008772850036621,
     "desc": "",
@@ -2934,7 +2934,7 @@
     "id": "p1757954809245",
     "title": "Tveitåsen hyttefelt",
     "category": "Interessepunkt",
-    "color": "#f92a78",
+    "color": "#03f8fc",
     "lat": 59.48375649677331,
     "lng": 11.055850982666017,
     "desc": "",
@@ -3052,17 +3052,6 @@
     "image": ""
   },
   {
-    "id": "p1757954865305",
-    "title": "Berg boligfelt",
-    "category": "Interessepunkt",
-    "color": "#03f8fc",
-    "lat": 59.5287270445046,
-    "lng": 10.79338073730469,
-    "desc": "",
-    "link": "",
-    "image": ""
-  },
-  {
     "id": "p1757954865465",
     "title": "Bergtunet",
     "category": "Interessepunkt",
@@ -3100,8 +3089,8 @@
     "title": "Kirkebygden barneskole, Våler ungdomskole, Vålerhallen",
     "category": "Interessepunkt",
     "color": "#fbff00",
-    "lat": 59.489943606084175,
-    "lng": 10.857646465301515,
+    "lat": 59.49016163555731,
+    "lng": 10.857496210546477,
     "desc": "",
     "link": "",
     "image": ""
@@ -3276,8 +3265,8 @@
     "title": "Våler Opplevelsessenter.",
     "category": "Aktivitet",
     "color": "#fe9706",
-    "lat": 59.45454386502265,
-    "lng": 10.84530830383301,
+    "lat": 59.47367605144585,
+    "lng": 10.85655212402344,
     "desc": "",
     "link": "",
     "image": ""
@@ -8071,6 +8060,94 @@
     "lng": 11.004137992858888,
     "desc": "",
     "link": "https://hyttebestilling.dnt.no/hytte/10755",
+    "image": ""
+  },
+  {
+    "id": "p1757964372560",
+    "title": "Vindmølle fra 1940 årene",
+    "category": "Interessepunkt",
+    "color": "#fc2a79",
+    "lat": 59.42569617828449,
+    "lng": 10.774326324462892,
+    "desc": "",
+    "link": "",
+    "image": ""
+  },
+  {
+    "id": "p1757964420938",
+    "title": "Torvuttak",
+    "category": "Interessepunkt",
+    "color": "#fc2b79",
+    "lat": 59.428661497329685,
+    "lng": 10.79758644104004,
+    "desc": "",
+    "link": "",
+    "image": ""
+  },
+  {
+    "id": "p1757964436668",
+    "title": "Dåhjortfarm",
+    "category": "Interessepunkt",
+    "color": "#fc2a79",
+    "lat": 59.42525812667205,
+    "lng": 10.790548324584963,
+    "desc": "",
+    "link": "",
+    "image": ""
+  },
+  {
+    "id": "p1757964600734",
+    "title": "Kirkebygden barnehage",
+    "category": "Interessepunkt",
+    "color": "#fbff00",
+    "lat": 59.49138072390023,
+    "lng": 10.855392575908912,
+    "desc": "",
+    "link": "",
+    "image": ""
+  },
+  {
+    "id": "p1757964627616",
+    "title": "Berg boligfelt",
+    "category": "Interessepunkt",
+    "color": "#03f5f9",
+    "lat": 59.49156654808377,
+    "lng": 10.873310809855063,
+    "desc": "",
+    "link": "",
+    "image": ""
+  },
+  {
+    "id": "p1757964682550",
+    "title": "Våler næringspark",
+    "category": "Interessepunkt",
+    "color": "#03f8fc",
+    "lat": 59.48484549583953,
+    "lng": 10.796897526634,
+    "desc": "",
+    "link": "",
+    "image": ""
+  },
+  {
+    "id": "p1757964722340",
+    "title": "Kirkebygden næringspark",
+    "category": "Interessepunkt",
+    "color": "#03f8fc",
+    "lat": 59.48837353512254,
+    "lng": 10.845741643392605,
+    "desc": "",
+    "link": "",
+    "image": ""
+  },
+  {
+    "id": "p1757964749658",
+    "title": "Sperbund gård og familiebarnehage",
+    "category": "Interessepunkt",
+    "color": "#fbff00",
+    "lat": 59.457596856317686,
+    "lng": 10.809300974350393,
+    "desc": "",
+    "link": "",
     "image": ""
   }
 ]
