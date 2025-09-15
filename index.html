@@ -46,11 +46,15 @@
     /* Canvas-warp overlay */
     .turkart-warp { position:absolute; top:0; left:0; pointer-events:none; }
 
+    /* Små varsler øverst (for manglende bilde o.l.) */
+    .toast { position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:1200; background:rgba(20,20,20,0.9); color:#fff; padding:8px 12px; border-radius:10px; box-shadow:0 4px 16px rgba(0,0,0,0.25); font-size:14px; }
+
     @media (max-width: 720px) { .toolbar { left: 6px; right: 6px; flex-wrap: wrap } }
   </style>
 </head>
 <body>
   <div id="map"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
   <!-- Topplinje / kontroller -->
   <div class="toolbar" role="toolbar" aria-label="Kartvaaler verktøy">
@@ -369,11 +373,35 @@
     }
 
     let warpOverlay;
-    function setupOverlay() {
-      // Bruk vår prosjektive canvas-warp slik at bildet ligger riktig i kvartilateralt hjørnesett
-      warpOverlay = new CanvasWarpOverlay('Turkart.png', WARP_CORNERS, { grid: 36, opacity: 0.85 });
+    async function findImageUrl() {
+      // Tillat ?img=sti eller gjetting av vanlige filnavn/mappeplasseringer
+      const urlp = new URLSearchParams(location.search);
+      const override = urlp.get('img');
+      const candidates = override ? [override] : [
+        'Turkart.png','turkart.png','Turkart.PNG','turkart.PNG',
+        'Turkart.jpg','turkart.jpg','Turkart.JPG','turkart.JPG',
+        'assets/Turkart.png','assets/turkart.png',
+        'img/Turkart.png','img/turkart.png'
+      ];
+      for (const c of candidates) {
+        const ok = await new Promise((resolve) => {
+          const im = new Image();
+          im.onload = () => resolve(true);
+          im.onerror = () => resolve(false);
+          // cache-busting query for sikkerhets skyld
+          im.src = c + (c.includes('?') ? '&' : '?') + 'v=' + Date.now();
+        });
+        if (ok) return c; // returner original sti uten cache-parameter
+      }
+      return null;
+    }
+    function showToast(msg, ms=4000){ const el = document.getElementById('toast'); if (!el) return; el.textContent = msg; el.hidden = false; clearTimeout(showToast._t); showToast._t = setTimeout(()=>{ el.hidden = true; }, ms); }
+
+    async function setupOverlay() {
+      const url = await findImageUrl();
+      if (!url) { showToast('Fant ikke bildefil (Turkart.*). Legg den ved siden av index.html eller bruk ?img=sti/fil.png'); return; }
+      warpOverlay = new CanvasWarpOverlay(url, WARP_CORNERS, { grid: 40, opacity: 0.85 });
       warpOverlay.addTo(map);
-      // Om du har din egen warp, kan du fjerne linjene over og kalle den her i stedet.
     }
 
     // Lag beholdere for markører og ruter
@@ -548,9 +576,9 @@
     });
 
     // --- Oppstart ---
-    function init() {
+    async function init() {
       ensureMap();
-      setupOverlay();
+      await setupOverlay();
       map.on('click', onMapClick);
       hookDrawEvents();
       loadPOIs();
