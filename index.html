@@ -43,6 +43,9 @@
     .poi-marker { display: grid; place-items: center; }
     .poi-dot { width: 16px; height:16px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 1px 6px rgba(0,0,0,0.35); }
 
+    /* Sørg for at kart-bildet ikke blokkerer input */
+    .leaflet-overlay-pane img.turkart { pointer-events: none !important; }
+
     @media (max-width: 720px) { .toolbar { left: 6px; right: 6px; flex-wrap: wrap } }
   </style>
 </head>
@@ -129,6 +132,13 @@
       SW: [59.387167906588274, 10.756945610046387]
     };
 
+    // Standardkategorier som alltid skal finnes
+    const DEFAULT_CATEGORIES = [
+      'Bebyggelse',
+      'skoler/barnehager',
+      'naturreservater'
+    ];
+
     // Default start midt i området
     const MAP_CENTER = [59.48, 10.98];
     const MAP_ZOOM = 11;
@@ -176,12 +186,35 @@
     }
 
     // --- EKSISTERENDE WARP OVERLAY ---
-    // Behold din eksisterende canvas‑warp-kode uendret. Denne filen påvirker ikke overlayPane.
-    // For rask lokal testing uten warp, kan du bruke imageOverlay (kommentert ut):
-    // const bounds = L.latLngBounds([WARP_CORNERS.SW, WARP_CORNERS.NE]);
-    // L.imageOverlay('Turkart.png', bounds, { opacity: 0.8, interactive: false }).addTo(map);
+    // 1) Hvis du har en eksisterende warp-funksjon, eksponer den som
+    //    window.setupCanvasWarp(map, corners, imgSrc)
+    //    så kalles den automatisk under init().
+    // 2) Hvis ikke, bruker vi et trygt fallback med imageOverlay
+    //    slik at Turkart.png vises (uten perspektiv-warp).
 
-    // Lag beholdere for markører og ruter
+    function setupOverlay() {
+      const imgSrc = 'Turkart.png';
+      try {
+        if (typeof window.setupCanvasWarp === 'function') {
+          window.setupCanvasWarp(map, WARP_CORNERS, imgSrc);
+          return;
+        }
+        if (typeof window.buildWarpOverlay === 'function') {
+          window.buildWarpOverlay(map, WARP_CORNERS, imgSrc);
+          return;
+        }
+      } catch (e) { console.warn('Egendefinert warp feilet, bruker fallback.', e); }
+
+      // Fallback: strekk bildet til et omsluttende rektangel
+      const lats = [WARP_CORNERS.NW[0], WARP_CORNERS.NE[0], WARP_CORNERS.SE[0], WARP_CORNERS.SW[0]];
+      const lngs = [WARP_CORNERS.NW[1], WARP_CORNERS.NE[1], WARP_CORNERS.SE[1], WARP_CORNERS.SW[1]];
+      const sw = L.latLng(Math.min(...lats), Math.min(...lngs));
+      const ne = L.latLng(Math.max(...lats), Math.max(...lngs));
+      const bounds = L.latLngBounds(sw, ne);
+      L.imageOverlay(imgSrc, bounds, { opacity: 0.85, interactive: false, className: 'turkart' }).addTo(map);
+    }
+
+    // Lag beholdere for markører og ruter for markører og ruter
     const poiLayer = L.featureGroup();
     const routeLayer = L.featureGroup();
 
@@ -259,8 +292,11 @@
     function openPointEditor(id) {
       const p = POIData.points.find(x => x.id === id); if (!p) return; currentEdit = { type: 'point', id };
       panelTitle.textContent = 'Rediger punkt';
-      // bygg kategoriliste fra eksisterende data
-      const cats = [...new Set(POIData.points.map(pp => (pp.category||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+      // bygg kategoriliste fra DEFAULT_CATEGORIES ∪ eksisterende
+      const cats = Array.from(new Set([
+        ...DEFAULT_CATEGORIES,
+        ...POIData.points.map(pp => (pp.category||'').trim()).filter(Boolean)
+      ])).sort((a,b)=>a.localeCompare(b));
       const options = [
         `<option value="" ${!p.category? 'selected':''}>— Ingen —</option>`,
         ...cats.map(c=>`<option value="${escapeHTML(c)}" ${p.category===c?'selected':''}>${escapeHTML(c)}</option>`),
@@ -338,7 +374,10 @@
     let activeCats = new Set(); // tom = alle
 
     function buildFilters() {
-      const cats = [...new Set(POIData.points.map(p => (p.category||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+      const cats = Array.from(new Set([
+        ...DEFAULT_CATEGORIES,
+        ...POIData.points.map(p => (p.category||'').trim()).filter(Boolean)
+      ])).sort((a,b)=>a.localeCompare(b));
       filterChips.innerHTML = '';
       for (const c of cats) {
         const chip = document.createElement('span');
@@ -421,6 +460,7 @@
     // --- Oppstart ---
     function init() {
       ensureMap();
+      setupOverlay();
       map.on('click', onMapClick);
       hookDrawEvents();
       loadPOIs();
