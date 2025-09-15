@@ -17,8 +17,8 @@
   .leaflet-container { background:#e8eef2; }
 
   /* Viktig: lar muse-drag/pan passere gjennom kartbildet */
-  .warp-pane,
-  .warp-pane canvas { pointer-events: none; }
+  /* lar muse-drag/pan passere gjennom kartbildet */
+  .warp-pane, .warp-pane canvas { pointer-events: none; }
   .warp-pane canvas { position:absolute; left:0; top:0; }
 
   /* Ikoner */
@@ -81,22 +81,26 @@
   }).addTo(map);
 
   // --- Canvas warp overlegg ---
-  const warpPane=map.createPane('warp');
-  warpPane.classList.add('warp-pane');
-  warpPane.style.pointerEvents='none'; // ekstra sikkerhet
-
-  const canvas=document.createElement('canvas');
-  const ctx=canvas.getContext('2d');
-  warpPane.appendChild(canvas);
+  // Legg canvas i overlayPane via en egen beholder som ikke forstyrrer andre overlays
+const warpRoot = L.DomUtil.create('div','warp-pane', map.getPanes().overlayPane);
+warpRoot.style.pointerEvents = 'none';
+const canvas=document.createElement('canvas');
+const ctx=canvas.getContext('2d');
+warpRoot.appendChild(canvas);
   let img=new Image(); let imgW=0, imgH=0; img.onload=()=>{ imgW=img.naturalWidth; imgH=img.naturalHeight; renderWarp(false); setStatus('Klar'); }; img.onerror=()=> setStatus('Klarte ikke å laste Turkart.png'); img.src=IMAGE_URL;
 
-  const toPt=(latlng)=> map.latLngToLayerPoint(latlng);
+  // Bruk container-punkter så canvas forblir låst til skjermen under pan/zoom
+const toPt=(latlng)=> map.latLngToContainerPoint(latlng);
   const CORNERS_LL=CORNERS.map(([lat,lng])=>L.latLng(lat,lng));
   const bounds=L.latLngBounds(CORNERS_LL);
   function fitView(){ map.fitBounds(bounds, { padding:[10,10] }); }
   document.getElementById('fitBtn').onclick=fitView;
 
-  function resizeCanvas(){ const sz=map.getSize(); canvas.width=sz.x; canvas.height=sz.y; const pos=map.containerPointToLayerPoint([0,0]); L.DomUtil.setPosition(canvas, pos); }
+  function resizeCanvas(){
+  const sz=map.getSize();
+  canvas.width=sz.x; canvas.height=sz.y;
+  // Viktig: IKKE sett posisjon/transform her – canvas ligger i overlayPane og følger det automatisk
+}
   function setTriTransform(ctx,s0,s1,s2,d0,d1,d2){
     const a11=s1.x-s0.x,a12=s2.x-s0.x,a21=s1.y-s0.y,a22=s2.y-s0.y; const det=a11*a22-a12*a21; if(Math.abs(det)<1e-12){ ctx.setTransform(1,0,0,1,0,0); return; }
     const inv11=a22/det, inv12=-a12/det, inv13=-(inv11*s0.x+inv12*s0.y);
