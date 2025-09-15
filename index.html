@@ -43,18 +43,11 @@
     .poi-marker { display: grid; place-items: center; }
     .poi-dot { width: 16px; height:16px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 1px 6px rgba(0,0,0,0.35); }
 
-    /* Canvas-warp overlay */
-    .turkart-warp { position:absolute; top:0; left:0; pointer-events:none; }
-
-    /* Små varsler øverst (for manglende bilde o.l.) */
-    .toast { position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:1200; background:rgba(20,20,20,0.9); color:#fff; padding:8px 12px; border-radius:10px; box-shadow:0 4px 16px rgba(0,0,0,0.25); font-size:14px; }
-
     @media (max-width: 720px) { .toolbar { left: 6px; right: 6px; flex-wrap: wrap } }
   </style>
 </head>
 <body>
   <div id="map"></div>
-  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
   <!-- Topplinje / kontroller -->
   <div class="toolbar" role="toolbar" aria-label="Kartvaaler verktøy">
@@ -131,7 +124,6 @@
     // ---- Konstanter ----
     const WARP_CORNERS = {
       // WGS84 lat/lng for hver bilde-hjørne (for Turkart.png)
-      // Antatt mapping: NW -> bilde (0,0), NE -> (w,0), SE -> (w,h), SW -> (0,h)
       NW: [59.54593535667747, 10.765142440795898],
       NE: [59.539561484456776, 11.201162338256838],
       SE: [59.380786150970934, 11.190948486328127],
@@ -168,240 +160,31 @@
     let editMode = false;
     let addPointPending = false;
 
-    // ---------------- Canvas-warp overlay (prosjektiv) ----------------
-    class CanvasWarpOverlay extends L.Layer {
-      constructor(url, latlngCorners, options={}) {
-        super();
-        this._url = url;
-        this._corners = latlngCorners; // {NW, NE, SE, SW}
-        this.options = Object.assign({ grid: 32, opacity: 0.9 }, options);
-        this._img = null;
-        this._canvas = null;
-        this._ctx = null;
-        this._onResize = this._redraw.bind(this);
-      }
-      onAdd(map) {
-        this._map = map;
-        this._canvas = L.DomUtil.create('canvas', 'turkart-warp');
-        this._ctx = this._canvas.getContext('2d');
-        const pane = this._map.getPanes().overlayPane;
-        pane.appendChild(this._canvas);
-        L.DomEvent.disableClickPropagation(this._canvas);
-        this._loadImage().then(()=>{
-          this._bind();
-          this._redraw();
-        });
-      }
-      onRemove() {
-        this._unbind();
-        if (this._canvas && this._canvas.parentNode) this._canvas.parentNode.removeChild(this._canvas);
-        this._canvas = null; this._ctx = null; this._img = null; this._map = null;
-      }
-      setOpacity(o){ this.options.opacity = o; this._redraw(); }
-      setUrl(u){ this._url = u; this._img = null; this._loadImage().then(()=>this._redraw()); }
-      setCorners(latlngCorners){ this._corners = latlngCorners; this._redraw(); }
-      _bind(){
-        this._map.on('move zoom resize zoomend', this._onResize);
-      }
-      _unbind(){
-        this._map.off('move zoom resize zoomend', this._onResize);
-      }
-      async _loadImage(){
-        if (this._img) return;
-        this._img = await new Promise((resolve, reject)=>{
-          const im = new Image();
-          im.onload = ()=>resolve(im);
-          im.onerror = reject;
-          im.src = this._url;
-        });
-      }
-      _redraw(){
-        if (!this._map || !this._canvas || !this._img) return;
-        const size = this._map.getSize();
-        if (this._canvas.width !== size.x || this._canvas.height !== size.y) {
-          this._canvas.width = size.x; this._canvas.height = size.y;
-          this._canvas.style.width = size.x + 'px'; this._canvas.style.height = size.y + 'px';
-        }
-        const ctx = this._ctx; ctx.clearRect(0,0,this._canvas.width,this._canvas.height); ctx.globalAlpha = this.options.opacity;
-
-        // Prosjektiv homografi fra bilde til skjerm
-        const src = [ [0,0], [this._img.width,0], [this._img.width,this._img.height], [0,this._img.height] ];
-        const dst = [ 'NW','NE','SE','SW' ].map(k => this._map.latLngToLayerPoint(this._corners[k])).map(p => [p.x, p.y]);
-        const H = computeHomography(src, dst);
-
-        // Tegn via triangulert mesh (for å tilnærme projektiv i 2D canvas)
-        const grid = this.options.grid;
-        for (let i=0;i<grid;i++){
-          for (let j=0;j<grid;j++){
-            const u0 = i/grid, v0 = j/grid, u1 = (i+1)/grid, v1 = (j+1)/grid;
-            // kildepunkter
-            const s00 = [u0*this._img.width, v0*this._img.height];
-            const s10 = [u1*this._img.width, v0*this._img.height];
-            const s11 = [u1*this._img.width, v1*this._img.height];
-            const s01 = [u0*this._img.width, v1*this._img.height];
-            // dest via homografi
-            const d00 = project(H, s00[0], s00[1]);
-            const d10 = project(H, s10[0], s10[1]);
-            const d11 = project(H, s11[0], s11[1]);
-            const d01 = project(H, s01[0], s01[1]);
-            // Trekant 1: 00-10-11
-            drawAffineTriangle(ctx, this._img,
-              s00[0], s00[1], s10[0], s10[1], s11[0], s11[1],
-              d00[0], d00[1], d10[0], d10[1], d11[0], d11[1]
-            );
-            // Trekant 2: 00-11-01
-            drawAffineTriangle(ctx, this._img,
-              s00[0], s00[1], s11[0], s11[1], s01[0], s01[1],
-              d00[0], d00[1], d11[0], d11[1], d01[0], d01[1]
-            );
-          }
-        }
-        ctx.globalAlpha = 1;
-      }
-    }
-
-    function computeHomography(src4, dst4){
-      // src4/dst4: [[x,y],... 4 punkter] i rekkefølge: 0->1->2->3 rundt
-      const A = [];
-      for (let i=0;i<4;i++){
-        const [x,y] = src4[i]; const [X,Y] = dst4[i];
-        A.push([ x, y, 1, 0, 0, 0, -x*X, -y*X, X ]);
-        A.push([ 0, 0, 0, x, y, 1, -x*Y, -y*Y, Y ]);
-      }
-      // Løs A*h = b via Gauss-Jordan
-      const h = solveLinearSystem(A); // length 9, siste skal være 1 etter normalisering
-      // Sett sammen 3x3
-      return [ [h[0],h[1],h[2]],[h[3],h[4],h[5]],[h[6],h[7],h[8]] ];
-    }
-    function project(H, x, y){
-      const X = H[0][0]*x + H[0][1]*y + H[0][2];
-      const Y = H[1][0]*x + H[1][1]*y + H[1][2];
-      const W = H[2][0]*x + H[2][1]*y + H[2][2];
-      return [ X/W, Y/W ];
-    }
-    function solveLinearSystem(A){
-      // A er 8x9 (16 ligninger, 9 ukjente) – vi løser i minste kvadraters forstand
-      // Enkel Gauss-Jordan på normal-likninger A^T A x = A^T b
-      const m = A.length; const n = 9; // kolonner
-      const AT = Array.from({length:n},()=>Array(m).fill(0));
-      for (let i=0;i<m;i++){ for (let j=0;j<n;j++){ AT[j][i] = A[i][j]; } }
-      const ATA = Array.from({length:n},()=>Array(n).fill(0));
-      const ATb = Array(n).fill(0);
-      for (let i=0;i<n;i++){
-        for (let j=0;j<n;j++){
-          let sum=0; for (let k=0;k<m;k++){ sum += AT[i][k]*A[k][j]; } ATA[i][j]=sum;
-        }
-        let s=0; for (let k=0;k<m;k++){ s += AT[i][k]*A[k][8]; } ATb[i]=s;
-      }
-      // Gauss eliminasjon
-      const M = ATA.map((row,i)=>row.concat([ATb[i]]));
-      for (let i=0;i<n;i++){
-        // pivot
-        let pivot = M[i][i]; let r=i;
-        for (let k=i+1;k<n;k++){ if (Math.abs(M[k][i])>Math.abs(pivot)) { pivot = M[k][i]; r=k; } }
-        if (r!==i) { const tmp=M[i]; M[i]=M[r]; M[r]=tmp; }
-        if (Math.abs(M[i][i])<1e-12) continue;
-        // normaliser
-        const div=M[i][i]; for (let j=i;j<=n;j++){ M[i][j]/=div; }
-        // eliminer
-        for (let k=0;k<n;k++) if (k!==i){ const f=M[k][i]; for (let j=i;j<=n;j++){ M[k][j]-=f*M[i][j]; } }
-      }
-      const x = M.map(row=>row[n]);
-      // normaliser slik at h[8] = 1
-      const s = x[8] || 1; return x.map(v=>v/s);
-    }
-    function drawAffineTriangle(ctx, img,
-      sx0,sy0, sx1,sy1, sx2,sy2,
-      dx0,dy0, dx1,dy1, dx2,dy2){
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(dx0,dy0); ctx.lineTo(dx1,dy1); ctx.lineTo(dx2,dy2); ctx.closePath();
-      ctx.clip();
-      // Konstruksjon av transformasjon: unit -> src og unit -> dest
-      // Matrise for src
-      const denom = (sx0*(sy1-sy2) + sx1*(sy2-sy0) + sx2*(sy0-sy1));
-      if (Math.abs(denom) < 1e-8) { ctx.restore(); return; }
-      // Affin transformasjon som map'er hele bilde til dest-tri og bruker drawImage
-      // Løs via formel M = B * inv(A)
-      const A = [ sx1 - sx0, sx2 - sx0, sx0,
-                  sy1 - sy0, sy2 - sy0, sy0,
-                  0,           0,        1 ];
-      const B = [ dx1 - dx0, dx2 - dx0, dx0,
-                  dy1 - dy0, dy2 - dy0, dy0,
-                  0,           0,        1 ];
-      const invA = invert3x3(A);
-      if (!invA) { ctx.restore(); return; }
-      const M = multiply3x3(B, invA);
-      ctx.setTransform(M[0], M[3], M[1], M[4], M[2], M[5]);
-      ctx.drawImage(img, 0, 0);
-      ctx.restore();
-    }
-    function invert3x3(m){
-      // m som flat 3x3 [a,b,c, d,e,f, g,h,i]
-      const a=m[0],b=m[1],c=m[2], d=m[3],e=m[4],f=m[5], g=m[6],h=m[7],i=m[8];
-      const A = e*i - f*h; const B = -(d*i - f*g); const C = d*h - e*g;
-      const D = -(b*i - c*h); const E = a*i - c*g; const F = -(a*h - b*g);
-      const G = b*f - c*e; const H = -(a*f - c*d); const I = a*e - b*d;
-      const det = a*A + b*B + c*C; if (Math.abs(det) < 1e-12) return null;
-      const inv = [ A/det, D/det, G/det, B/det, E/det, H/det, C/det, F/det, I/det ];
-      return inv;
-    }
-    function multiply3x3(a, b){
-      // a,b som flat 3x3, retur flat 3x3
-      const r = new Array(9).fill(0);
-      r[0]=a[0]*b[0]+a[1]*b[3]+a[2]*b[6];
-      r[1]=a[0]*b[1]+a[1]*b[4]+a[2]*b[7];
-      r[2]=a[0]*b[2]+a[1]*b[5]+a[2]*b[8];
-      r[3]=a[3]*b[0]+a[4]*b[3]+a[5]*b[6];
-      r[4]=a[3]*b[1]+a[4]*b[4]+a[5]*b[7];
-      r[5]=a[3]*b[2]+a[4]*b[5]+a[5]*b[8];
-      r[6]=a[6]*b[0]+a[7]*b[3]+a[8]*b[6];
-      r[7]=a[6]*b[1]+a[7]*b[4]+a[8]*b[7];
-      r[8]=a[6]*b[2]+a[7]*b[5]+a[8]*b[8];
-      return r;
-    }
-
-    // ---------------- Kart init + overlay ----------------
+    // ---------------- Kart init ----------------
     let map;
     function ensureMap() {
       if (window.map instanceof L.Map) {
-        map = window.map; // respekter eksisterende oppsett
+        map = window.map; // respekter eksisterende oppsett (inkl. egen warp)
       } else {
         map = L.map('map', { zoomControl: true, attributionControl: true }).setView(MAP_CENTER, MAP_ZOOM);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> bidragsytere' }).addTo(map);
       }
     }
 
-    let warpOverlay;
-    async function findImageUrl() {
-      // Tillat ?img=sti eller gjetting av vanlige filnavn/mappeplasseringer
-      const urlp = new URLSearchParams(location.search);
-      const override = urlp.get('img');
-      const candidates = override ? [override] : [
-        'Turkart.png','turkart.png','Turkart.PNG','turkart.PNG',
-        'Turkart.jpg','turkart.jpg','Turkart.JPG','turkart.JPG',
-        'assets/Turkart.png','assets/turkart.png',
-        'img/Turkart.png','img/turkart.png'
-      ];
-      for (const c of candidates) {
-        const ok = await new Promise((resolve) => {
-          const im = new Image();
-          im.onload = () => resolve(true);
-          im.onerror = () => resolve(false);
-          // cache-busting query for sikkerhets skyld
-          im.src = c + (c.includes('?') ? '&' : '?') + 'v=' + Date.now();
-        });
-        if (ok) return c; // returner original sti uten cache-parameter
+    // ---------------- Overlay hook (ingen fallback) ----------------
+    function setupOverlay() {
+      // VIKTIG: Vi rører ikke overlay lenger. Vi kaller KUN din eksisterende warp-funksjon om den finnes.
+      // Behold samme signatur som tidligere var i prosjektet.
+      const img = 'Turkart.png';
+      if (typeof window.setupCanvasWarp === 'function') {
+        // Din funksjon: setupCanvasWarp(map, corners, imgSrc)
+        window.setupCanvasWarp(map, WARP_CORNERS, img);
+      } else if (typeof window.buildWarpOverlay === 'function') {
+        // Alternativt navn du kanskje brukte
+        window.buildWarpOverlay(map, WARP_CORNERS, img);
+      } else {
+        console.warn('[Kartvaaler] Fant ingen warp-funksjon. Legg tilbake din tidligere canvas-warp-kode.');
       }
-      return null;
-    }
-    function showToast(msg, ms=4000){ const el = document.getElementById('toast'); if (!el) return; el.textContent = msg; el.hidden = false; clearTimeout(showToast._t); showToast._t = setTimeout(()=>{ el.hidden = true; }, ms); }
-
-    async function setupOverlay() {
-      const url = await findImageUrl();
-      if (!url) { showToast('Fant ikke bildefil (Turkart.*). Legg den ved siden av index.html eller bruk ?img=sti/fil.png'); return; }
-      warpOverlay = new CanvasWarpOverlay(url, WARP_CORNERS, { grid: 40, opacity: 0.85 });
-      warpOverlay.addTo(map);
     }
 
     // Lag beholdere for markører og ruter
@@ -576,9 +359,9 @@
     });
 
     // --- Oppstart ---
-    async function init() {
+    function init() {
       ensureMap();
-      await setupOverlay();
+      setupOverlay(); // kaller KUN din gamle warp hvis den finnes
       map.on('click', onMapClick);
       hookDrawEvents();
       loadPOIs();
