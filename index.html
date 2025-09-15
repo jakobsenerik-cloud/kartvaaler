@@ -89,17 +89,24 @@ const ctx=canvas.getContext('2d');
 warpRoot.appendChild(canvas);
   let img=new Image(); let imgW=0, imgH=0; img.onload=()=>{ imgW=img.naturalWidth; imgH=img.naturalHeight; renderWarp(false); setStatus('Klar'); }; img.onerror=()=> setStatus('Klarte ikke å laste Turkart.png'); img.src=IMAGE_URL;
 
-  // Bruk container-punkter så canvas forblir låst til skjermen under pan/zoom
-const toPt=(latlng)=> map.latLngToContainerPoint(latlng);
+  // Bruk LAYER-koordinater og forankre canvas til lagets øvre venstre hjørne
+let layerOrigin = L.point(0,0);
+const llToCanvas = (ll) => {
+  const p = map.latLngToLayerPoint(ll);
+  return { x: p.x - layerOrigin.x, y: p.y - layerOrigin.y };
+};
   const CORNERS_LL=CORNERS.map(([lat,lng])=>L.latLng(lat,lng));
   const bounds=L.latLngBounds(CORNERS_LL);
   function fitView(){ map.fitBounds(bounds, { padding:[10,10] }); }
   document.getElementById('fitBtn').onclick=fitView;
 
   function resizeCanvas(){
-  const sz=map.getSize();
-  canvas.width=sz.x; canvas.height=sz.y;
-  // Viktig: IKKE sett posisjon/transform her – canvas ligger i overlayPane og følger det automatisk
+  const sz = map.getSize();
+  canvas.width = sz.x; canvas.height = sz.y;
+  // Viktig: forankre canvas i overlayPane til lagets (0,0)
+  const pos = map.containerPointToLayerPoint([0,0]);
+  layerOrigin = L.point(pos.x, pos.y);
+  L.DomUtil.setPosition(canvas, pos);
 }
   function setTriTransform(ctx,s0,s1,s2,d0,d1,d2){
     const a11=s1.x-s0.x,a12=s2.x-s0.x,a21=s1.y-s0.y,a22=s2.y-s0.y; const det=a11*a22-a12*a21; if(Math.abs(det)<1e-12){ ctx.setTransform(1,0,0,1,0,0); return; }
@@ -119,7 +126,7 @@ const toPt=(latlng)=> map.latLngToContainerPoint(latlng);
   opacity.addEventListener('input', ()=> renderWarp(false));
 
   function renderWarp(quick=false){ if(!imgW||!imgH) return; resizeCanvas(); ctx.save(); ctx.clearRect(0,0,canvas.width,canvas.height); ctx.globalAlpha=parseFloat(opacity.value||'0.95');
-    const [NW,NE,SE,SW]=CORNERS_LL.map(ll=>toPt(ll));
+    const [NW,NE,SE,SW] = CORNERS_LL.map(ll => llToCanvas(ll));
     const COLS= quick? 8 : 22, ROWS= quick? 8 : 22; // rask under bevegelse, pen når stoppet
     for(let j=0;j<ROWS;j++){
       const v0=j/ROWS, v1=(j+1)/ROWS;
