@@ -44,10 +44,17 @@
     .poi-dot { width: 16px; height:16px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 1px 6px rgba(0,0,0,0.35); }
 
     @media (max-width: 720px) { .toolbar { left: 6px; right: 6px; flex-wrap: wrap } }
+      /* Toast for feilmeldinger / status */
+    .toast { position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:1200; background:rgba(20,20,20,0.9); color:#fff; padding:8px 12px; border-radius:10px; box-shadow:0 4px 16px rgba(0,0,0,0.25); font-size:14px; }
   </style>
+  <!-- Leaflet.DistortableImage (for korrekt 4-hjørners georeferanse) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.distortableimage@0.12.0/dist/leaflet.distortableimage.css" />
+  <script src="https://unpkg.com/leaflet.distortableimage@0.12.0/dist/leaflet.distortableimage.js"></script>
+
 </head>
 <body>
   <div id="map"></div>
+  <div id="toast" class="toast" hidden></div>
 
   <!-- Topplinje / kontroller -->
   <div class="toolbar" role="toolbar" aria-label="Kartvaaler verktøy">
@@ -172,14 +179,66 @@
     }
 
     // ---------------- Overlay hook (ingen fallback) ----------------
-    function setupOverlay() {
-      // VIKTIG: Vi rører ikke overlay lenger. Vi kaller KUN din eksisterende warp-funksjon om den finnes.
-      // Behold samme signatur som tidligere var i prosjektet.
-      const img = 'Turkart.png';
-      if (typeof window.setupCanvasWarp === 'function') {
-        // Din funksjon: setupCanvasWarp(map, corners, imgSrc)
-        window.setupCanvasWarp(map, WARP_CORNERS, img);
-      } else if (typeof window.buildWarpOverlay === 'function') {
+    function showToast(msg, ms=3500){ const el=document.getElementById('toast'); if(!el) return; el.textContent=msg; el.hidden=false; clearTimeout(showToast._t); showToast._t=setTimeout(()=>el.hidden=true, ms); }
+
+    async function resolveImageUrl(){
+      // Tillat overstyring via ?img=...
+      const sp = new URLSearchParams(location.search);
+      const override = sp.get('img');
+      const candidates = override ? [override] : [
+        'Turkart.png','turkart.png','Turkart.PNG','turkart.PNG',
+        'Turkart.jpg','turkart.jpg','Turkart.JPG','turkart.JPG',
+        'assets/Turkart.png','assets/turkart.png','assets/img/Turkart.png','img/Turkart.png','img/turkart.png'
+      ];
+      for (const c of candidates){
+        const ok = await new Promise(res=>{ const im=new Image(); im.onload=()=>res(true); im.onerror=()=>res(false); im.src=c+ (c.includes('?')?'&':'?') + 'v='+Date.now(); });
+        if (ok) return c; }
+      return null;
+    }
+
+    async function setupOverlay() {
+      // 1) Din egen warp først
+      const imgUrl = await resolveImageUrl();
+      if (!imgUrl){ showToast('Fant ikke bildefil (prøv ?img=sti/fil.png)'); return; }
+      if (typeof window.setupCanvasWarp === 'function') { window.setupCanvasWarp(map, WARP_CORNERS, imgUrl); showToast('Bruker egen warp'); return; }
+      if (typeof window.buildWarpOverlay === 'function') { window.buildWarpOverlay(map, WARP_CORNERS, imgUrl); showToast('Bruker egen warp'); return; }
+      // 2) Leaflet.DistortableImage fallback
+      if (typeof L.distortableImageOverlay === 'function') {
+        const corners = [ L.latLng(...WARP_CORNERS.NW), L.latLng(...WARP_CORNERS.NE), L.latLng(...WARP_CORNERS.SE), L.latLng(...WARP_CORNERS.SW) ];
+        const overlay = L.distortableImageOverlay(imgUrl, { corners, editable:false, selected:false, suppressToolbar:true }).addTo(map);
+        overlay.once('load', ()=>{ const el=overlay._image || (overlay.getElement&&overlay.getElement()); if (el){ el.style.pointerEvents='none'; el.style.opacity='0.85'; } });
+        showToast('Bruker DistortableImage: '+imgUrl, 2500);
+        return;
+      }
+      console.warn('[Kartvaaler] Ingen warp/DistortableImage tilgjengelig.');
+      showToast('Mangler warp-bibliotek.');
+    }
+      if (typeof window.buildWarpOverlay === 'function') {
+        window.buildWarpOverlay(map, WARP_CORNERS, img); return;
+      }
+      // 2) Ellers bruk Leaflet.DistortableImage (prosjektiv mapping mot 4 hjørner)
+      if (typeof L.distortableImageOverlay === 'function') {
+        const corners = [
+          L.latLng(WARP_CORNERS.NW[0], WARP_CORNERS.NW[1]),
+          L.latLng(WARP_CORNERS.NE[0], WARP_CORNERS.NE[1]),
+          L.latLng(WARP_CORNERS.SE[0], WARP_CORNERS.SE[1]),
+          L.latLng(WARP_CORNERS.SW[0], WARP_CORNERS.SW[1])
+        ];
+        const overlay = L.distortableImageOverlay(img, {
+          corners,
+          editable: false,
+          selected: false,
+          suppressToolbar: true
+        }).addTo(map);
+        // sørg for at bildet ikke blokkerer klikk/drag
+        overlay.once('load', () => {
+          const el = overlay._image || overlay.getElement && overlay.getElement();
+          if (el) { el.style.pointerEvents = 'none'; el.style.opacity = 0.85; }
+        });
+        return;
+      }
+      console.warn('[Kartvaaler] Fant verken din warp eller DistortableImage. Legg inn en av dem for korrekt georeferanse.');
+    } else if (typeof window.buildWarpOverlay === 'function') {
         // Alternativt navn du kanskje brukte
         window.buildWarpOverlay(map, WARP_CORNERS, img);
       } else {
@@ -359,9 +418,9 @@
     });
 
     // --- Oppstart ---
-    function init() {
+    async function init() {
       ensureMap();
-      setupOverlay(); // kaller KUN din gamle warp hvis den finnes
+      await setupOverlay();
       map.on('click', onMapClick);
       hookDrawEvents();
       loadPOIs();
