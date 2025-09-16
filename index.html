@@ -43,6 +43,10 @@
 
     @media (max-width: 720px) { .toolbar { left: 6px; right: 6px; flex-wrap: wrap } }
   </style>
+  <!-- Leaflet.DistortableImage for nøyaktig 4-hjørners mapping -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.distortableimage@0.12.0/dist/leaflet.distortableimage.css" />
+  <script src="https://unpkg.com/leaflet.distortableimage@0.12.0/dist/leaflet.distortableimage.js"></script>
+
 </head>
 <body>
   <div id="map"></div>
@@ -168,10 +172,30 @@
 
     // ---------------- Overlay ----------------
     function setupOverlay() {
-      // 1) Bruk din tidligere warp hvis tilgjengelig
       const img = 'Turkart.png';
       try {
         if (typeof window.setupCanvasWarp === 'function') { window.setupCanvasWarp(map, WARP_CORNERS, img); showToast('Warp: custom'); return; }
+        if (typeof window.buildWarpOverlay === 'function') { window.buildWarpOverlay(map, WARP_CORNERS, img); showToast('Warp: custom'); return; }
+      } catch (e) { console.error('Egen warp feilet:', e); }
+
+      // Preferér DistortableImage (presis projektiv mapping) hvis tilgjengelig
+      if (typeof L.distortableImageOverlay === 'function') {
+        const corners = [ L.latLng(...WARP_CORNERS.NW), L.latLng(...WARP_CORNERS.NE), L.latLng(...WARP_CORNERS.SE), L.latLng(...WARP_CORNERS.SW) ];
+        const overlay = L.distortableImageOverlay(img, { corners, editable:false, selected:false, suppressToolbar:true }).addTo(map);
+        overlay.once('load', ()=>{ const el=overlay._image || (overlay.getElement&&overlay.getElement()); if (el){ el.style.pointerEvents='none'; el.style.opacity='0.85'; } });
+        showToast('Warp: DistortableImage');
+        return;
+      }
+
+      // Siste utvei: enkel rektangulær overlay (kan gi unøyaktighet ved skjeve hjørner)
+      const lats = [WARP_CORNERS.NW[0], WARP_CORNERS.NE[0], WARP_CORNERS.SE[0], WARP_CORNERS.SW[0]];
+      const lngs = [WARP_CORNERS.NW[1], WARP_CORNERS.NE[1], WARP_CORNERS.SE[1], WARP_CORNERS.SW[1]];
+      const sw = L.latLng(Math.min(...lats), Math.min(...lngs));
+      const ne = L.latLng(Math.max(...lats), Math.max(...lngs));
+      const bounds = L.latLngBounds(sw, ne);
+      L.imageOverlay(img, bounds, { opacity: 0.85, interactive: false }).addTo(map);
+      showToast('Warp: enkel fallback (rektangel)');
+    }
         if (typeof window.buildWarpOverlay === 'function') { window.buildWarpOverlay(map, WARP_CORNERS, img); showToast('Warp: custom'); return; }
       } catch (e) { console.error('Egen warp feilet:', e); }
 
