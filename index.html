@@ -3,173 +3,120 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-  <title>Kartvaaler – Rediger + Kalibrer (Canvas‑Warp Flat)</title>
-
-  <!-- Leaflet -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
-
-  <!-- Leaflet.Draw -->
+  <title>Kartvaaler – Safe Warp (GL max-size fix + 2D fallback)</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
-
   <style>
     html, body, #map { height: 100%; margin: 0; }
-
-    /* Canvas‑warp ligger i overlay‑pane og er alltid helt flat */
-    .leaflet-warpgl { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
-
-    .toolbar { position: fixed; z-index: 1100; top: 10px; left: 10px; display: flex; flex-wrap: wrap; gap: 8px; background: rgba(255,255,255,0.9); backdrop-filter: blur(6px); border-radius: 12px; padding: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); }
-    .toolbar button, .toolbar select, .toolbar input[type="color"] { border: 1px solid #e2e2e2; background: #fff; border-radius: 10px; padding: 8px 10px; font-size: 14px; cursor: pointer; }
-    .toolbar button.primary { background: #0a7cff; color: #fff; border-color: #0a7cff; }
-
-    .panel { position: fixed; z-index: 1100; right: 10px; bottom: 10px; width: min(360px, 92vw); max-height: 65vh; overflow: auto; background: rgba(255,255,255,0.98); backdrop-filter: blur(6px); border-radius: 14px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); padding: 12px 14px; display: none; }
-    .panel.open { display: block; }
-    .panel h3 { margin: 6px 0 10px; }
-    .panel label { display:block; font-size: 13px; margin: 8px 0 4px; }
-    .panel input[type="text"], .panel textarea, .panel select { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; }
-    .panel textarea { min-height: 80px; resize: vertical; }
-    .panel .row { display: flex; gap: 8px; }
-    .panel .row > * { flex: 1; }
-    .panel .actions { display:flex; gap:8px; margin-top:10px; }
-
-    .filters { position: fixed; z-index: 1100; left: 10px; bottom: 10px; background: rgba(255,255,255,0.9); backdrop-filter: blur(6px); border-radius: 12px; padding: 10px; max-width: 70vw; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: none; }
-    .filters.open { display:block; }
-    .filters h4 { margin: 0 0 6px; }
-    .filters .chips { display:flex; flex-wrap: wrap; gap: 6px; }
-    .chip { border:1px solid #ddd; border-radius: 999px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
-    .chip.active { background:#0a7cff; color:#fff; border-color:#0a7cff; }
-
-    .poi-marker { display: grid; place-items: center; }
-    .poi-dot { width: 16px; height:16px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 1px 6px rgba(0,0,0,0.35); }
-
-    .toast { position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:1200; background:rgba(20,20,20,0.9); color:#fff; padding:8px 12px; border-radius:10px; box-shadow:0 4px 16px rgba(0,0,0,0.25); font-size:14px; }
-
-    @media (max-width: 720px) { .toolbar { left: 6px; right: 6px; } }
+    .toolbar { position: fixed; z-index: 1100; top: 10px; left: 10px; display: flex; gap: 8px; background: rgba(255,255,255,.9); padding: 8px; border-radius: 10px; box-shadow: 0 4px 14px rgba(0,0,0,.15); }
+    .toolbar button { border: 1px solid #e2e2e2; background: #fff; border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+    .toolbar button.primary { background:#0a7cff; color:#fff; border-color:#0a7cff; }
+    .status { position: fixed; z-index: 1100; right: 10px; top: 10px; background: rgba(255,255,255,.9); padding: 8px 10px; border-radius: 10px; font: 12px/1.4 system-ui, sans-serif; box-shadow: 0 4px 14px rgba(0,0,0,.15);} 
+    .toast { position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:1200; background:rgba(20,20,20,.9); color:#fff; padding:6px 10px; border-radius:10px; }
+    .leaflet-warp2d, .leaflet-warpgl { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; }
   </style>
 </head>
 <body>
   <div id="map"></div>
+  <div class="toolbar">
+    <button id="btnCalibrate">Kalibrer</button>
+    <button id="btnCopyCorners">Kopier hjørner</button>
+  </div>
+  <div id="status" class="status">Status: …</div>
   <div id="toast" class="toast" hidden></div>
 
-  <!-- Verktøylinje -->
-  <div class="toolbar" role="toolbar" aria-label="Kartvaaler verktøy">
-    <button id="btnEdit" class="primary" title="Slå av/på redigering (E)">✎ Rediger: AV</button>
-    <button id="btnAddPoint" title="Legg til punkt (klikk i kartet)">＋ Punkt</button>
-    <button id="btnRouteTool" title="Tegn/rediger ruter">Ruteverktøy</button>
-    <button id="btnFilters" title="Filtrer kategorier">Filter</button>
-
-    <button id="btnCalibrate" title="Kalibrer kartbilde (dra uavhengige hjørner)">Kalibrer</button>
-    <button id="btnCopyCorners" title="Kopier WARP_CORNERS til utklippstavlen">Kopier hjørner</button>
-
-    <button id="btnSave" title="Last ned oppdatert pois.json">⬇︎ Lagre POIs</button>
-  </div>
-
-  <!-- Editorpanel for punkt/rute -->
-  <div id="panel" class="panel" aria-live="polite">
-    <h3 id="panelTitle">Rediger</h3>
-    <div id="panelBody"></div>
-    <div class="actions">
-      <button id="btnApply" class="primary">Lagre endringer</button>
-      <button id="btnDelete">Slett</button>
-      <button id="btnClose">Lukk</button>
-    </div>
-  </div>
-
-  <!-- Kategori-filter -->
-  <div id="filters" class="filters">
-    <h4>Kategorier</h4>
-    <div id="filterChips" class="chips"></div>
-  </div>
-
   <script>
-    // ---- Konstanter ----
+    const IMAGE_URL = 'Turkart.png';
     const WARP_CORNERS = {
       NW: [59.54593535667747, 10.765142440795898],
       NE: [59.539561484456776, 11.201162338256838],
       SE: [59.380786150970934, 11.190948486328127],
       SW: [59.387167906588274, 10.756945610046387]
     };
-    const DEFAULT_CATEGORIES = [ 'Bebyggelse', 'skoler/barnehager', 'naturreservater' ];
     const MAP_CENTER = [59.48, 10.98];
     const MAP_ZOOM = 11;
-    const IMAGE_URL = 'Turkart.png';
 
-    // Data + indekser
-    let POIData = { points: [], routes: [] };
-    const markerIndex = new Map();
-    const routeIndex = new Map();
+    const statusEl = document.getElementById('status');
+    function setStatus(msg){ statusEl.textContent = 'Status: ' + msg; }
+    function toast(msg, ms=2500){ const t=document.getElementById('toast'); t.textContent=msg; t.hidden=false; clearTimeout(toast._t); toast._t=setTimeout(()=>t.hidden=true, ms); }
 
-    // UI refs
-    const btnEdit = document.getElementById('btnEdit');
-    const btnAddPoint = document.getElementById('btnAddPoint');
-    const btnRouteTool = document.getElementById('btnRouteTool');
-    const btnFilters = document.getElementById('btnFilters');
-    const btnCalibrate = document.getElementById('btnCalibrate');
-    const btnCopyCorners = document.getElementById('btnCopyCorners');
-    const btnSave = document.getElementById('btnSave');
-    const panel = document.getElementById('panel');
-    const panelBody = document.getElementById('panelBody');
-    const panelTitle = document.getElementById('panelTitle');
-    const btnApply = document.getElementById('btnApply');
-    const btnDelete = document.getElementById('btnDelete');
-    const btnClose = document.getElementById('btnClose');
-    const filters = document.getElementById('filters');
-    const filterChips = document.getElementById('filterChips');
+    // Leaflet map
+    const map = L.map('map').setView(MAP_CENTER, MAP_ZOOM);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OSM'}).addTo(map);
 
-    let editMode = false;
-    let addPointPending = false;
+    // Helpers
+    function ll2pt(ll){ return map.latLngToLayerPoint(ll); }
 
-    function showToast(msg, ms=3000){
-      const el = document.getElementById('toast');
-      if (!el) return; el.textContent = msg; el.hidden = false;
-      clearTimeout(showToast._t); showToast._t = setTimeout(()=> el.hidden = true, ms);
+    // 2D Canvas warp (two-triangle technique)
+    class Warp2DLayer extends L.Layer{
+      constructor(img){ super(); this._img = img; }
+      onAdd(map){ this._map=map; this._c = L.DomUtil.create('canvas','leaflet-warp2d'); this._ctx=this._c.getContext('2d'); map.getPanes().overlayPane.appendChild(this._c); this._onMv = this._draw.bind(this); map.on('move zoom viewreset resize', this._onMv); this._resize(); this._draw(); }
+      onRemove(map){ map.off('move zoom viewreset resize', this._onMv); this._c.remove(); }
+      setCorners(arr){ this._corners = arr; this._draw(); }
+      _resize(){ const s=map.getSize(); this._c.width=s.x; this._c.height=s.y; L.DomUtil.setPosition(this._c, L.point(0,0)); }
+      _draw(){ if(!this._corners||!this._img.complete) return; this._resize(); const s=map.getSize(); const ctx=this._ctx; ctx.clearRect(0,0,s.x,s.y);
+        const p=[ ll2pt(this._corners[0]), ll2pt(this._corners[1]), ll2pt(this._corners[2]), ll2pt(this._corners[3]) ];
+        // Draw tri A: (0,0)-(w,0)-(w,h)
+        this._drawTri(ctx, [p[0],p[1],p[2]], [0,0, this._img.width,0, this._img.width,this._img.height]);
+        // Draw tri B: (0,0)-(w,h)-(0,h)
+        this._drawTri(ctx, [p[0],p[2],p[3]], [0,0, this._img.width,this._img.height, 0,this._img.height]);
+      }
+      _drawTri(ctx, p, t){ // p: [{x,y}*3], t: [sx,sy, sx2,sy2, sx3,sy3]
+        ctx.save();
+        // Compute affine transform mapping texture triangle t->screen triangle p
+        const [x0,y0,x1,y1,x2,y2] = t;
+        const [p0,p1,p2] = p;
+        const denom = (x0*(y1 - y2) + x1*(y2 - y0) + x2*(y0 - y1)) || 1;
+        // Matrix from tex to screen (affine)
+        const a = (p0.x*(y1 - y2) + p1.x*(y2 - y0) + p2.x*(y0 - y1)) / denom;
+        const b = (p0.y*(y1 - y2) + p1.y*(y2 - y0) + p2.y*(y0 - y1)) / denom;
+        const c = (p0.x*(x2 - x1) + p1.x*(x0 - x2) + p2.x*(x1 - x0)) / denom;
+        const d = (p0.y*(x2 - x1) + p1.y*(x0 - x2) + p2.y*(x1 - x0)) / denom;
+        const e = (p0.x*(x1*y2 - x2*y1) + p1.x*(x2*y0 - x0*y2) + p2.x*(x0*y1 - x1*y0)) / denom;
+        const f = (p0.y*(x1*y2 - x2*y1) + p1.y*(x2*y0 - x0*y2) + p2.y*(x0*y1 - x1*y0)) / denom;
+        ctx.setTransform(a, b, c, d, e, f);
+        // Clip to triangle in screen space to avoid overdraw
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.lineTo(x2, y2); ctx.closePath(); ctx.clip();
+        ctx.drawImage(this._img, 0, 0); // Uses the transform set above
+        ctx.restore();
+      }
     }
 
-    // ---------------- Kart init ----------------
-    let map;
-    function ensureMap() {
-      map = L.map('map', { zoomControl: true, attributionControl: true }).setView(MAP_CENTER, MAP_ZOOM);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> bidragsytere'
-      }).addTo(map);
-    }
-
-    // ---------------- Canvas‑Warp (WebGL) ----------------
-    function createShader(gl, type, src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s); if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){throw new Error(gl.getShaderInfoLog(s)||'shader error');} return s; }
-    function createProgram(gl, vs, fs){ const p=gl.createProgram(); gl.attachShader(p,vs); gl.attachShader(p,fs); gl.linkProgram(p); if(!gl.getProgramParameter(p,gl.LINK_STATUS)){throw new Error(gl.getProgramInfoLog(p)||'link error');} return p; }
-
-    class WarpGLLayer extends L.Layer {
-      constructor(imgUrl){ super(); this._imgUrl = imgUrl; this._img = new Image(); this._img.crossOrigin = ''; this._imgLoaded=false; this._pending=false; this._corners = [ [0,0],[1,0],[1,1],[0,1] ]; this._onMove = this._reset.bind(this); this._img.onload=()=>{ this._imgLoaded=true; this._createTexture(); this._draw(); }; this._img.src = imgUrl; }
-      onAdd(map){ this._map = map; this._canvas = L.DomUtil.create('canvas','leaflet-warpgl'); this._canvas.width = map.getSize().x; this._canvas.height = map.getSize().y; this._gl = this._canvas.getContext('webgl', { alpha:true, premultipliedAlpha:true, antialias:true });
-        if(!this._gl){ throw new Error('WebGL ikke støttet'); }
-        this._initGL(); map.getPanes().overlayPane.appendChild(this._canvas); map.on('move zoom viewreset resize', this._onMove); this._reset(); }
-      onRemove(map){ map.off('move zoom viewreset resize', this._onMove); if(this._canvas && this._canvas.parentNode) this._canvas.parentNode.removeChild(this._canvas); }
-      setCorners(latlngCorners){ this._ll = latlngCorners; this._draw(); }
-      _initGL(){ const gl=this._gl; const vs = createShader(gl, gl.VERTEX_SHADER, `attribute vec2 a_pos; attribute vec2 a_tex; varying vec2 v_tex; uniform vec2 u_res; void main(){ vec2 clip = (a_pos/u_res*2.0-1.0)*vec2(1.0,-1.0); gl_Position = vec4(clip,0.0,1.0); v_tex=a_tex; }`);
-        const fs = createShader(gl, gl.FRAGMENT_SHADER, `precision mediump float; varying vec2 v_tex; uniform sampler2D u_img; void main(){ gl_FragColor = texture2D(u_img, v_tex); }`);
-        this._prog = createProgram(gl, vs, fs); gl.useProgram(this._prog);
-        this._aPos = gl.getAttribLocation(this._prog, 'a_pos'); this._aTex = gl.getAttribLocation(this._prog, 'a_tex'); this._uRes = gl.getUniformLocation(this._prog, 'u_res'); this._uImg = gl.getUniformLocation(this._prog, 'u_img');
-        this._posBuf = gl.createBuffer(); this._texBuf = gl.createBuffer();
-        this._tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, this._tex);
+    // WebGL layer (with MAX_TEXTURE_SIZE downscale)
+    class WarpGLLayer extends L.Layer{
+      constructor(img){ super(); this._img = img; }
+      onAdd(map){ this._map = map; this._canvas = L.DomUtil.create('canvas','leaflet-warpgl'); this._gl = this._canvas.getContext('webgl', { alpha:true, premultipliedAlpha:true, antialias:true });
+        map.getPanes().overlayPane.appendChild(this._canvas); this._onMv = this._draw.bind(this); map.on('move zoom viewreset resize', this._onMv); this._resize(); this._initGL(); this._createTexture(); this._draw(); }
+      onRemove(map){ map.off('move zoom viewreset resize', this._onMv); this._canvas.remove(); }
+      setCorners(arr){ this._corners = arr; this._draw(); }
+      _resize(){ const s=map.getSize(); this._canvas.width=s.x; this._canvas.height=s.y; L.DomUtil.setPosition(this._canvas, L.point(0,0)); }
+      _initGL(){ const gl=this._gl; if(!gl) throw new Error('WebGL ikke støttet');
+        const vs = gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(vs, 'attribute vec2 a_pos; attribute vec2 a_tex; varying vec2 v_tex; uniform vec2 u_res; void main(){ vec2 clip=(a_pos/u_res*2.0-1.0)*vec2(1.0,-1.0); gl_Position=vec4(clip,0.0,1.0); v_tex=a_tex; }'); gl.compileShader(vs);
+        const fs = gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(fs, 'precision mediump float; varying vec2 v_tex; uniform sampler2D u_img; void main(){ gl_FragColor = texture2D(u_img, v_tex); }'); gl.compileShader(fs);
+        const prog = gl.createProgram(); gl.attachShader(prog,vs); gl.attachShader(prog,fs); gl.linkProgram(prog); if(!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error('GL link feilet');
+        this._glProg = prog; this._aPos = gl.getAttribLocation(prog,'a_pos'); this._aTex = gl.getAttribLocation(prog,'a_tex'); this._uRes = gl.getUniformLocation(prog,'u_res'); this._uImg = gl.getUniformLocation(prog,'u_img');
+        this._posBuf = gl.createBuffer(); this._texBuf = gl.createBuffer(); this._tex = gl.createTexture();
+      }
+      _createTexture(){ const gl=this._gl; const img=this._img; gl.useProgram(this._glProg); gl.bindTexture(gl.TEXTURE_2D, this._tex);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        const max = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 4096;
+        let src = img; // may be downscaled
+        if (img.width > max || img.height > max){
+          const scale = Math.min(max/img.width, max/img.height);
+          const c=document.createElement('canvas'); c.width=Math.floor(img.width*scale); c.height=Math.floor(img.height*scale);
+          const cx=c.getContext('2d'); cx.drawImage(img, 0,0, c.width, c.height); src=c; setStatus(`WebGL: nedskalerte tekstur til ${c.width}x${c.height} (max ${max})`);
+        }
+        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
       }
-      _createTexture(){ if(!this._gl||!this._imgLoaded) return; const gl=this._gl; gl.bindTexture(gl.TEXTURE_2D, this._tex); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,this._img); this._draw(); }
-      _reset(){ if(!this._map) return; const size=this._map.getSize(); this._canvas.width = size.x; this._canvas.height = size.y; L.DomUtil.setPosition(this._canvas, L.point(0,0)); this._draw(); }
-      _draw(){ if(!this._gl||!this._imgLoaded||!this._ll) return; const gl=this._gl; const res=[this._canvas.width,this._canvas.height]; gl.viewport(0,0,res[0],res[1]); gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
-        const p = [ this._map.latLngToLayerPoint(this._ll[0]), this._map.latLngToLayerPoint(this._ll[1]), this._map.latLngToLayerPoint(this._ll[2]), this._map.latLngToLayerPoint(this._ll[3]) ];
-        const pos = new Float32Array([
-          p[0].x, p[0].y,  p[1].x, p[1].y,  p[2].x, p[2].y,  // tri 1 NW-NE-SE
-          p[0].x, p[0].y,  p[2].x, p[2].y,  p[3].x, p[3].y   // tri 2 NW-SE-SW
-        ]);
-        const tex = new Float32Array([
-          0,0, 1,0, 1,1,
-          0,0, 1,1, 0,1
-        ]);
-        gl.useProgram(this._prog);
-        gl.uniform2f(this._uRes, res[0], res[1]);
+      _draw(){ const gl=this._gl; if(!gl||!this._corners) return; const s=map.getSize(); this._resize(); gl.viewport(0,0,this._canvas.width,this._canvas.height); gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT); gl.useProgram(this._glProg);
+        const p=[ ll2pt(this._corners[0]), ll2pt(this._corners[1]), ll2pt(this._corners[2]), ll2pt(this._corners[3]) ];
+        const pos=new Float32Array([ p[0].x,p[0].y, p[1].x,p[1].y, p[2].x,p[2].y, p[0].x,p[0].y, p[2].x,p[2].y, p[3].x,p[3].y ]);
+        const tex=new Float32Array([ 0,0, 1,0, 1,1, 0,0, 1,1, 0,1 ]);
+        gl.uniform2f(this._uRes, this._canvas.width, this._canvas.height);
         gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this._tex); gl.uniform1i(this._uImg, 0);
         gl.bindBuffer(gl.ARRAY_BUFFER, this._posBuf); gl.bufferData(gl.ARRAY_BUFFER, pos, gl.DYNAMIC_DRAW); gl.enableVertexAttribArray(this._aPos); gl.vertexAttribPointer(this._aPos, 2, gl.FLOAT, false, 0, 0);
         gl.bindBuffer(gl.ARRAY_BUFFER, this._texBuf); gl.bufferData(gl.ARRAY_BUFFER, tex, gl.STATIC_DRAW); gl.enableVertexAttribArray(this._aTex); gl.vertexAttribPointer(this._aTex, 2, gl.FLOAT, false, 0, 0);
@@ -177,267 +124,49 @@
       }
     }
 
-    let warpLayer; // vår flate warp‑overlay
-
-    // ---------------- Kalibrering ----------------
-    const cornerMarkers = {}; // NW/NE/SE/SW -> L.marker
-    let calOn = false;
-
-    function updateCornersFromMarkers(){
-      for(const k of ['NW','NE','SE','SW']){
-        const m = cornerMarkers[k]; if (!m) continue; const ll = m.getLatLng(); WARP_CORNERS[k] = [ll.lat, ll.lng];
-      }
-      warpLayer.setCorners([ WARP_CORNERS.NW, WARP_CORNERS.NE, WARP_CORNERS.SE, WARP_CORNERS.SW ]);
-    }
-
-    function setCalibrate(on){
-      calOn = (typeof on==='boolean') ? on : !calOn;
-      btnCalibrate.classList.toggle('primary', calOn);
-      btnCalibrate.textContent = calOn ? 'Kalibrer (PÅ)' : 'Kalibrer';
-      if (calOn){
-        for (const k of ['NW','NE','SE','SW']){
-          const m = cornerMarkers[k] || L.marker(WARP_CORNERS[k], { draggable:true, zIndexOffset:1000 }).bindTooltip(k, { permanent:true, direction:'top', offset:[0,-12] });
-          if (!cornerMarkers[k]){ m.on('drag', updateCornersFromMarkers); cornerMarkers[k] = m; }
-          m.setLatLng(WARP_CORNERS[k]).addTo(map).openTooltip();
-        }
-      } else {
-        for (const k of Object.keys(cornerMarkers)) try { map.removeLayer(cornerMarkers[k]); } catch(_){ }
-      }
-    }
-
-    btnCalibrate.addEventListener('click', () => setCalibrate());
-    btnCopyCorners.addEventListener('click', async () => {
-      const obj = { NW: WARP_CORNERS.NW, NE: WARP_CORNERS.NE, SE: WARP_CORNERS.SE, SW: WARP_CORNERS.SW };
-      const text = 'WARP_CORNERS = ' + JSON.stringify(obj, null, 2);
-      try { await navigator.clipboard.writeText(text); showToast('Hjørner kopiert'); } catch(_) { showToast('Kopi feilet – marker og kopier manuelt'); }
-    });
-
-    // ---------------- POIs + ruter ----------------
-    const poiLayer = L.featureGroup();
-    const routeLayer = L.featureGroup();
-
-    const drawControl = new L.Control.Draw({
-      position: 'topleft',
-      draw: { marker: false, rectangle: false, circle: false, circlemarker: false, polygon: false,
-        polyline: { shapeOptions: { weight: 4 }, metric: true, showLength: true } },
-      edit: { featureGroup: routeLayer, edit: true, remove: true }
-    });
-    let drawControlAdded = false;
-
-    function uid(prefix='id') { return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}`; }
-    function makePOIIcon(color = '#ff3b30') { return L.divIcon({ className: 'poi-marker', iconSize: [18,18], iconAnchor: [9,9], html: `<div class="poi-dot" style="background:${color}"></div>` }); }
-
-    async function loadPOIs() {
+    // Load image and choose best overlay
+    const img = new Image();
+    img.onload = () => {
       try {
-        const res = await fetch('pois.json', { cache: 'no-store' });
-        if (!res.ok) throw new Error('Fant ikke pois.json');
-        const data = await res.json();
-        POIData.points = Array.isArray(data.points) ? data.points : (Array.isArray(data) ? data : []);
-        POIData.routes = Array.isArray(data.routes) ? data.routes : [];
-      } catch (e) {
-        console.warn('Kunne ikke laste pois.json – starter tomt.', e);
-        POIData = { points: [], routes: [] };
-      }
-      renderAll(); buildFilters();
-    }
-
-    function renderAll() {
-      poiLayer.clearLayers(); routeLayer.clearLayers(); markerIndex.clear(); routeIndex.clear();
-      routeLayer.addTo(map); poiLayer.addTo(map);
-      for (const r of POIData.routes) {
-        const line = L.polyline(r.coords || r.latlngs || [], { color: r.color || '#0a7cff', weight: 4, opacity: 0.9 });
-        line.addTo(routeLayer); routeIndex.set(r.id, line); line.on('click', () => openRouteEditor(r.id));
-      }
-      for (const p of POIData.points) addMarkerToMap(p);
-    }
-    function addMarkerToMap(p) {
-      const m = L.marker([p.lat, p.lng], { icon: makePOIIcon(p.color || '#ff3b30'), draggable: !!editMode }).addTo(poiLayer);
-      markerIndex.set(p.id, m); m.bindPopup(makePopupHTML(p));
-      m.on('dragend', () => { const latlng = m.getLatLng(); p.lat = latlng.lat; p.lng = latlng.lng; m.setPopupContent(makePopupHTML(p)); });
-      m.on('click', () => { if (editMode) openPointEditor(p.id); });
-      return m;
-    }
-    function makePopupHTML(p) {
-      const title = p.title || 'Uten navn';
-      const desc = p.desc || '';
-      const cat = p.category || 'ukjent';
-      return `<div style="min-width:180px"><strong>${escapeHTML(title)}</strong><br/><small>Kategori: ${escapeHTML(cat)}</small>${desc ? `<p style=\"margin:6px 0 0\">${escapeHTML(desc)}</p>` : ''}</div>`;
-    }
-    function escapeHTML(str="") { return String(str).replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;' }[m])); }
-
-    // --- Redigeringspaneler ---
-    let currentEdit = { type: null, id: null };
-    function openPointEditor(id) {
-      const p = POIData.points.find(x => x.id === id); if (!p) return; currentEdit = { type: 'point', id };
-      panelTitle.textContent = 'Rediger punkt';
-      const cats = Array.from(new Set([ ...DEFAULT_CATEGORIES, ...POIData.points.map(pp => (pp.category||'').trim()).filter(Boolean) ])).sort((a,b)=>a.localeCompare(b));
-      const options = [ `<option value="" ${!p.category? 'selected':''}>— Ingen —</option>`, ...cats.map(c=>`<option value="${escapeHTML(c)}" ${p.category===c?'selected':''}>${escapeHTML(c)}</option>`), `<option value="__new__">+ Ny kategori…</option>`].join('');
-      panelBody.innerHTML = `
-        <label>Tittel<input id="f_title" type="text" value="${p.title ? escapeHTML(p.title) : ''}" /></label>
-        <label>Beskrivelse<textarea id="f_desc">${p.desc ? escapeHTML(p.desc) : ''}</textarea></label>
-        <div class="row">
-          <label>Farge<input id="f_color" type="color" value="${p.color || '#ff3b30'}" /></label>
-          <label>Kategori<select id="f_category">${options}</select></label>
-        </div>
-        <label id="row_newcat" style="display:none;">Ny kategori<input id="f_category_new" type="text" placeholder="Skriv ny kategori" /></label>
-        <div class="row">
-          <label>Lat<input id="f_lat" type="text" value="${p.lat}" /></label>
-          <label>Lng<input id="f_lng" type="text" value="${p.lng}" /></label>
-        </div>`;
-      const sel = panelBody.querySelector('#f_category'); const rowNew = panelBody.querySelector('#row_newcat'); sel.addEventListener('change', () => { rowNew.style.display = sel.value === '__new__' ? 'block' : 'none'; });
-      panel.classList.add('open');
-    }
-    function openRouteEditor(id) {
-      const r = POIData.routes.find(x => x.id === id); if (!r) return; currentEdit = { type: 'route', id };
-      panelTitle.textContent = 'Rediger rute';
-      panelBody.innerHTML = `<label>Navn<input id=\"r_name\" type=\"text\" value=\"${r.name ? escapeHTML(r.name) : ''}\" /></label>
-        <div class=\"row\"><label>Farge<input id=\"r_color\" type=\"color\" value=\"${r.color || '#0a7cff'}\" /></label>
-        <label>Antall punkter<input type=\"text\" value=\"${(r.coords||[]).length}\" disabled /></label></div>`;
-      panel.classList.add('open');
-    }
-
-    btnApply.addEventListener('click', () => {
-      if (currentEdit.type === 'point') {
-        const p = POIData.points.find(x => x.id === currentEdit.id); if (!p) return;
-        p.title = panelBody.querySelector('#f_title').value.trim();
-        p.desc = panelBody.querySelector('#f_desc').value.trim();
-        p.color = panelBody.querySelector('#f_color').value;
-        const catSel = panelBody.querySelector('#f_category').value;
-        p.category = (catSel === '__new__') ? panelBody.querySelector('#f_category_new').value.trim() : catSel.trim();
-        p.lat = parseFloat(panelBody.querySelector('#f_lat').value);
-        p.lng = parseFloat(panelBody.querySelector('#f_lng').value);
-        const m = markerIndex.get(p.id);
-        if (m) { m.setLatLng([p.lat, p.lng]); m.setIcon(makePOIIcon(p.color || '#ff3b30')); m.setPopupContent(makePopupHTML(p)); }
-        buildFilters();
-      } else if (currentEdit.type === 'route') {
-        const r = POIData.routes.find(x => x.id === currentEdit.id); if (!r) return;
-        r.name = panelBody.querySelector('#r_name').value.trim();
-        r.color = panelBody.querySelector('#r_color').value;
-        const line = routeIndex.get(r.id); if (line) line.setStyle({ color: r.color || '#0a7cff' });
-      }
-      panel.classList.remove('open');
-    });
-
-    btnDelete.addEventListener('click', () => {
-      if (!currentEdit.type) return; if (!confirm('Sikker på at du vil slette?')) return;
-      if (currentEdit.type === 'point') {
-        const i = POIData.points.findIndex(x => x.id === currentEdit.id); if (i >= 0) POIData.points.splice(i,1);
-        const m = markerIndex.get(currentEdit.id); if (m) { poiLayer.removeLayer(m); markerIndex.delete(currentEdit.id); }
-      } else if (currentEdit.type === 'route') {
-        const i = POIData.routes.findIndex(x => x.id === currentEdit.id); if (i >= 0) POIData.routes.splice(i,1);
-        const line = routeIndex.get(currentEdit.id); if (line) { routeLayer.removeLayer(line); routeIndex.delete(currentEdit.id); }
-      }
-      panel.classList.remove('open');
-    });
-    btnClose.addEventListener('click', () => panel.classList.remove('open'));
-
-    // --- Kategorifilter ---
-    let activeCats = new Set();
-    function buildFilters() {
-      const cats = Array.from(new Set([
-        ...DEFAULT_CATEGORIES,
-        ...POIData.points.map(p => (p.category||'').trim()).filter(Boolean)
-      ])).sort((a,b)=>a.localeCompare(b));
-      filterChips.innerHTML = '';
-      for (const c of cats) {
-        const chip = document.createElement('span'); chip.className = 'chip' + (activeCats.has(c) ? ' active' : ''); chip.textContent = c;
-        chip.addEventListener('click', () => { if (activeCats.has(c)) activeCats.delete(c); else activeCats.add(c); chip.classList.toggle('active'); applyFilters(); });
-        filterChips.appendChild(chip);
-      }
-      applyFilters();
-    }
-    function applyFilters() {
-      const showAll = activeCats.size === 0;
-      POIData.points.forEach(p => {
-        const m = markerIndex.get(p.id); if (!m) return;
-        const visible = showAll || activeCats.has((p.category||'').trim());
-        if (visible) m.addTo(poiLayer); else poiLayer.removeLayer(m);
-      });
-    }
-
-    // --- Redigeringsmodus ---
-    function setEditMode(on) {
-      editMode = !!on;
-      btnEdit.textContent = `✎ Rediger: ${editMode ? 'PÅ' : 'AV'}`;
-      btnEdit.classList.toggle('primary', editMode);
-      markerIndex.forEach((m) => { if (m.dragging) { editMode ? m.dragging.enable() : m.dragging.disable(); } });
-      if (editMode) {
-        if (!drawControlAdded) { map.addControl(drawControl); drawControlAdded = true; }
-      } else {
-        if (drawControlAdded) { map.removeControl(drawControl); drawControlAdded = false; }
-      }
-    }
-    btnEdit.addEventListener('click', () => setEditMode(!editMode));
-    window.addEventListener('keydown', (e) => { if (e.key.toLowerCase()==='e') setEditMode(!editMode); });
-
-    // Legg til punkt neste klikk
-    btnAddPoint.addEventListener('click', () => {
-      if (!editMode) setEditMode(true);
-      addPointPending = true; btnAddPoint.classList.add('primary'); btnAddPoint.textContent = 'Klikk i kartet…';
-    });
-    btnRouteTool.addEventListener('click', () => { if (!editMode) setEditMode(true); alert('Velg linje‑verktøyet i menyen til venstre for å tegne.'); });
-
-    function onMapClick(e) {
-      if (!addPointPending) return;
-      addPointPending = false; btnAddPoint.classList.remove('primary'); btnAddPoint.textContent = '＋ Punkt';
-      const p = { id: uid('p'), lat: e.latlng.lat, lng: e.latlng.lng, title: 'Nytt punkt', desc: '', color: '#ff3b30', category: '' };
-      POIData.points.push(p); addMarkerToMap(p).openPopup(); openPointEditor(p.id); buildFilters();
-    }
-
-    function hookDrawEvents() {
-      map.on(L.Draw.Event.CREATED, (evt) => {
-        if (evt.layerType === 'polyline') {
-          const layer = evt.layer; routeLayer.addLayer(layer);
-          const r = { id: uid('r'), name: 'Ny rute', color: '#0a7cff', coords: layer.getLatLngs().map(ll => [ll.lat, ll.lng]) };
-          POIData.routes.push(r); routeIndex.set(r.id, layer);
-          layer.setStyle({ color: r.color }); layer.on('click', () => openRouteEditor(r.id));
-          openRouteEditor(r.id);
+        const gl = document.createElement('canvas').getContext('webgl');
+        if (gl) {
+          setStatus('Prøver WebGL‑warp');
+          const glLayer = new WarpGLLayer(img); glLayer.addTo(map);
+          glLayer.setCorners([ WARP_CORNERS.NW, WARP_CORNERS.NE, WARP_CORNERS.SE, WARP_CORNERS.SW ]);
+          window._warpLayer = glLayer; window._warpMode = 'webgl';
+          setStatus('WebGL‑warp aktiv');
+        } else {
+          throw new Error('Ingen WebGL');
         }
-      });
-      map.on(L.Draw.Event.EDITED, (evt) => {
-        evt.layers.eachLayer((layer) => {
-          for (const [id, l] of routeIndex.entries()) {
-            if (l === layer) {
-              const r = POIData.routes.find(x => x.id === id);
-              if (r) r.coords = layer.getLatLngs().map(ll => [ll.lat, ll.lng]);
-            }
-          }
-        });
-      });
-      map.on(L.Draw.Event.DELETED, (evt) => {
-        evt.layers.eachLayer((layer) => {
-          for (const [id, l] of routeIndex.entries()) {
-            if (l === layer) {
-              const i = POIData.routes.findIndex(x => x.id === id);
-              if (i>=0) POIData.routes.splice(i,1);
-              routeIndex.delete(id);
-            }
-          }
-        });
-      });
+      } catch (e) {
+        console.warn('WebGL feilet, bruker 2D', e);
+        setStatus('WebGL feilet – bruker 2D‑warp');
+        const c2 = new Warp2DLayer(img); c2.addTo(map);
+        c2.setCorners([ WARP_CORNERS.NW, WARP_CORNERS.NE, WARP_CORNERS.SE, WARP_CORNERS.SW ]);
+        window._warpLayer = c2; window._warpMode = '2d';
+      }
+    };
+    img.onerror = () => { setStatus('Kunne ikke laste Turkart.png'); toast('Fant ikke Turkart.png i rotmappen'); };
+    img.src = IMAGE_URL; // samme opprinnelse – ingen CORS nødvendig
+
+    // Calibration UI (map markers move corners)
+    const btnCal = document.getElementById('btnCalibrate');
+    const btnCopy = document.getElementById('btnCopyCorners');
+    const cornerMarkers = {}; let calOn = false;
+
+    function updateFromMarkers(){ for(const k of ['NW','NE','SE','SW']){ const m=cornerMarkers[k]; if(!m) continue; const ll=m.getLatLng(); WARP_CORNERS[k]=[ll.lat, ll.lng]; }
+      const layer = window._warpLayer; if (layer && layer.setCorners) layer.setCorners([ WARP_CORNERS.NW, WARP_CORNERS.NE, WARP_CORNERS.SE, WARP_CORNERS.SW ]);
     }
+    function setCal(on){ calOn = (typeof on==='boolean')?on:!calOn; btnCal.classList.toggle('primary', calOn); btnCal.textContent = calOn? 'Kalibrer (PÅ)':'Kalibrer'; if(calOn){
+        for (const k of ['NW','NE','SE','SW']){ const m = cornerMarkers[k] || L.marker(WARP_CORNERS[k], { draggable:true, zIndexOffset:900 }).bindTooltip(k, { permanent:true, direction:'top', offset:[0,-12] }); if(!cornerMarkers[k]){ m.on('drag', updateFromMarkers); cornerMarkers[k]=m; } m.setLatLng(WARP_CORNERS[k]).addTo(map).openTooltip(); }
+      } else {
+        for (const k of Object.keys(cornerMarkers)) try{ map.removeLayer(cornerMarkers[k]); }catch(_){ }
+      } updateFromMarkers(); }
+    btnCal.addEventListener('click', () => setCal());
+    btnCopy.addEventListener('click', async () => { const text = 'WARP_CORNERS = ' + JSON.stringify(WARP_CORNERS, null, 2); try{ await navigator.clipboard.writeText(text); toast('Hjørner kopiert'); } catch(_){ toast('Kopi feilet – marker og kopier manuelt'); } });
 
-    // Lagre POI-data til fil
-    btnSave.addEventListener('click', () => {
-      const blob = new Blob([JSON.stringify(POIData, null, 2)], { type: 'application/json' });
-      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'pois.json'; a.click();
-      setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
-    });
-
-    // --- Oppstart ---
-    function init() {
-      ensureMap();
-      warpLayer = new WarpGLLayer(IMAGE_URL);
-      warpLayer.addTo(map);
-      warpLayer.setCorners([ WARP_CORNERS.NW, WARP_CORNERS.NE, WARP_CORNERS.SE, WARP_CORNERS.SW ]);
-      map.on('click', onMapClick);
-      hookDrawEvents();
-      loadPOIs();
-    }
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
-
-    // Eksponer for debugging
-    window.Kartvaaler = { get map() { return map; }, POIData, WARP_CORNERS };
+    // Expose for quick debug
+    window.Kartvaaler = { map, WARP_CORNERS, get warpMode(){return window._warpMode}, get layer(){return window._warpLayer} };
   </script>
 </body>
 </html>
