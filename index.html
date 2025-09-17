@@ -14,8 +14,11 @@
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
 
   <!-- Leaflet.DistortableImage for presis 4-hjørners georeferanse og hjørnehåndtak -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet.distortableimage@0.12.0/dist/leaflet.distortableimage.css" />
-  <script src="https://unpkg.com/leaflet.distortableimage@0.12.0/dist/leaflet.distortableimage.js"></script>
+  <!-- Viktig: riktig pakke-navn + vendor-filer -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-distortableimage@0.21.9/dist/vendor.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-distortableimage@0.21.9/dist/leaflet.distortableimage.css" />
+  <script src="https://cdn.jsdelivr.net/npm/leaflet-distortableimage@0.21.9/dist/vendor.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/leaflet-distortableimage@0.21.9/dist/leaflet.distortableimage.js"></script>
 
   <style>
     html, body, #map { height: 100%; margin: 0; }
