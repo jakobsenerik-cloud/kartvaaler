@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-  <title>Kartvaaler – Rediger + Kalibrer (Distortable built‑in)</title>
+  <title>Kartvaaler – Rediger + Kalibrer (Flat Distortable)</title>
 
   <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous" />
@@ -19,16 +19,18 @@
   <script src="https://cdn.jsdelivr.net/npm/leaflet-distortableimage@0.21.9/dist/vendor.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/leaflet-distortableimage@0.21.9/dist/leaflet.distortableimage.js"></script>
 
-  .leaflet-container, .leaflet-pane, .leaflet-map-pane, .leaflet-tile-pane, .leaflet-overlay-pane, .leaflet-image-layer{
-  perspective:none !important;
-  transform-style:flat !important;
-  backface-visibility:hidden !important;
-}
-.leaflet-overlay-pane img.leaflet-image-layer{ z-index:450; }
-
-  
   <style>
     html, body, #map { height: 100%; margin: 0; }
+
+    /* Tving helt flat 2D for alle Leaflet-lag (hindrer 3D/perspective-bugs) */
+    .leaflet-container, .leaflet-pane, .leaflet-map-pane, .leaflet-tile-pane, .leaflet-overlay-pane, .leaflet-image-layer {
+      perspective: none !important;
+      transform-style: flat !important;
+      backface-visibility: hidden !important;
+    }
+    /* Sørg for at bildet ligger over tiles ved kalibrering */
+    .leaflet-overlay-pane img.leaflet-image-layer { z-index: 450; }
+
     .toolbar { position: fixed; z-index: 1100; top: 10px; left: 10px; display: flex; flex-wrap: wrap; gap: 8px; background: rgba(255,255,255,0.9); backdrop-filter: blur(6px); border-radius: 12px; padding: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); }
     .toolbar button, .toolbar select, .toolbar input[type="color"] { border: 1px solid #e2e2e2; background: #fff; border-radius: 10px; padding: 8px 10px; font-size: 14px; cursor: pointer; }
     .toolbar button.primary { background: #0a7cff; color: #fff; border-color: #0a7cff; }
@@ -69,7 +71,8 @@
     <button id="btnRouteTool" title="Tegn/rediger ruter">Ruteverktøy</button>
     <button id="btnFilters" title="Filtrer kategorier">Filter</button>
     <button id="btnCalibrate" title="Kalibrer kartbilde (dra hjørner i bildet)">Kalibrer</button>
-    <button id="btnSave" title="Last ned oppdatert pois.json">⬇︎ Lagre fil</button>
+    <button id="btnCopyCorners" title="Kopier WARP_CORNERS til utklippstavlen">Kopier hjørner</button>
+    <button id="btnSave" title="Last ned oppdatert pois.json">⬇︎ Lagre POIs</button>
   </div>
 
   <!-- Editorpanel for punkt/rute -->
@@ -112,6 +115,7 @@
     const btnRouteTool = document.getElementById('btnRouteTool');
     const btnFilters = document.getElementById('btnFilters');
     const btnCalibrate = document.getElementById('btnCalibrate');
+    const btnCopyCorners = document.getElementById('btnCopyCorners');
     const btnSave = document.getElementById('btnSave');
     const panel = document.getElementById('panel');
     const panelBody = document.getElementById('panelBody');
@@ -164,7 +168,7 @@
 
         overlay.once('load', () => {
           const el = overlay._image || overlay.getElement?.();
-          if (el) el.style.pointerEvents = 'none'; // låst i vanlig modus
+          if (el) el.style.pointerEvents = 'none'; // lås i normal modus
         });
 
         // Sync tilbake når bruker drar hjørner
@@ -203,13 +207,24 @@
       btnCalibrate.classList.toggle('primary', calOn);
       btnCalibrate.textContent = calOn ? 'Kalibrer (PÅ)' : 'Kalibrer';
       if (calOn) {
-        overlay.editing?.enable();
-        overlay.fire?.('select');
-        if (el) el.style.pointerEvents = 'auto';
+        overlay.bringToFront && overlay.bringToFront();
+        // enable etter et microtask‑tick, så DOM‑noder er klare
+        Promise.resolve().then(() => {
+          overlay.editing?.enable();
+          overlay.fire?.('select');
+          if (el) el.style.pointerEvents = 'auto';
+        });
       } else {
         overlay.editing?.disable();
         if (el) el.style.pointerEvents = 'none';
       }
+    });
+
+    // Kopier hjørner
+    btnCopyCorners.addEventListener('click', async () => {
+      const text = 'WARP_CORNERS = ' + JSON.stringify(WARP_CORNERS, null, 2);
+      try { await navigator.clipboard.writeText(text); showToast('Hjørner kopiert'); }
+      catch(_) { showToast('Kopi feilet – marker og kopier manuelt'); }
     });
 
     // ---------------- POIs + ruter ----------------
