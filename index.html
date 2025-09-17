@@ -19,6 +19,14 @@
   <script src="https://cdn.jsdelivr.net/npm/leaflet-distortableimage@0.21.9/dist/vendor.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/leaflet-distortableimage@0.21.9/dist/leaflet.distortableimage.js"></script>
 
+  .leaflet-container, .leaflet-pane, .leaflet-map-pane, .leaflet-tile-pane, .leaflet-overlay-pane, .leaflet-image-layer{
+  perspective:none !important;
+  transform-style:flat !important;
+  backface-visibility:hidden !important;
+}
+.leaflet-overlay-pane img.leaflet-image-layer{ z-index:450; }
+
+  
   <style>
     html, body, #map { height: 100%; margin: 0; }
     .toolbar { position: fixed; z-index: 1100; top: 10px; left: 10px; display: flex; flex-wrap: wrap; gap: 8px; background: rgba(255,255,255,0.9); backdrop-filter: blur(6px); border-radius: 12px; padding: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); }
