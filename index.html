@@ -3,110 +3,133 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Kartvaaler – Diagnose (minimal)</title>
-  <style>
-    html, body { height: 100%; margin: 0; }
-    #map { height: 100%; }
-    #log { position: fixed; right: 10px; top: 10px; width: min(420px, 90vw); max-height: 60vh; overflow: auto; background: rgba(20,20,20,.85); color: #d6f5ff; padding: 10px; border-radius: 8px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; z-index: 2000; }
-    #log.hide { display: none; }
-    #note { position: fixed; left: 10px; bottom: 10px; background: rgba(255,255,255,.95); padding: 8px 10px; border-radius: 8px; font: 13px system-ui, sans-serif; z-index: 2001; box-shadow: 0 4px 12px rgba(0,0,0,.15); }
-  </style>
+  <title>Kartvaaler – Kalibrer (2D warp, robust)</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html, body, #map { height: 100%; margin: 0; }
+    /* Warp-canvas alltid over fliser/rect-overlay, uten å fange klikk */
+    .leaflet-overlay-pane canvas.leaflet-warp2d { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index: 450; }
+    .leaflet-overlay-pane img.leaflet-image-layer { z-index: 440; }
+
+    .toolbar { position: fixed; z-index: 1100; top: 10px; left: 10px; display: flex; flex-wrap: wrap; gap: 8px; background: rgba(255,255,255,.95); padding: 8px; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.15); font: 14px system-ui, sans-serif; }
+    .toolbar button { border: 1px solid #e2e2e2; background: #fff; border-radius: 10px; padding: 8px 10px; cursor: pointer; }
+    .toolbar button.primary { background:#0a7cff; color:#fff; border-color:#0a7cff; }
+    .toolbar .sep { width: 1px; height: 28px; background:#e7e7e7; margin: 0 4px; }
+    .status { position: fixed; z-index: 1100; right: 10px; top: 10px; background: rgba(255,255,255,.95); padding: 8px 10px; border-radius: 10px; font: 12px/1.4 system-ui, sans-serif; box-shadow: 0 4px 14px rgba(0,0,0,.15);} 
+  </style>
 </head>
 <body>
   <div id="map"></div>
-  <pre id="log">Starter logg … (trykk D for å skjule/vis)</pre>
-  <div id="note">Denne versjonen viser kun OSM + <code>Turkart.png</code> (rektangulært) + POI-markører. Ingen warp eller rute-UI ennå. Poenget er å sikre at bildet faktisk lastes og vises. Når dette fungerer, skrur vi på warp igjen.</div>
+  <div class="toolbar">
+    <button id="btnCalibrate" class="primary">Kalibrer</button>
+    <button id="btnCopy">Kopier hjørner</button>
+    <button id="btnSaveCorners">Lagre lokalt</button>
+    <button id="btnLoadCorners">Last lokalt</button>
+    <div class="sep"></div>
+    <button id="btnReset">Reset hjørner</button>
+  </div>
+  <div id="status" class="status">Status: init…</div>
 
-  <!-- 1) Ekstremt tidlig feillogger i EGEN script-tag -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-  (function(){
-    var logEl = document.getElementById('log');
-    function w(){
-      var parts = [];
-      for (var i=0;i<arguments.length;i++) {
-        try { parts.push(typeof arguments[i]==='string' ? arguments[i] : JSON.stringify(arguments[i])); }
-        catch(e){ parts.push(String(arguments[i])); }
+    // --- Konfig ---
+    const IMAGE_URL = 'Turkart.png';
+    const DEFAULT_CORNERS = {
+      NW: [59.54593535667747, 10.765142440795898],
+      NE: [59.539561484456776, 11.201162338256838],
+      SE: [59.380786150970934, 11.190948486328127],
+      SW: [59.387167906588274, 10.756945610046387]
+    };
+    const STORAGE_KEY = 'kartvaaler-warp-corners-v1';
+
+    const statusEl = document.getElementById('status');
+    const btnCalibrate = document.getElementById('btnCalibrate');
+    const btnCopy = document.getElementById('btnCopy');
+    const btnSaveCorners = document.getElementById('btnSaveCorners');
+    const btnLoadCorners = document.getElementById('btnLoadCorners');
+    const btnReset = document.getElementById('btnReset');
+
+    function setStatus(msg){ statusEl.textContent = 'Status: ' + msg; }
+
+    // --- Kart ---
+    const map = L.map('map').setView([59.48, 10.98], 11);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OSM' }).addTo(map);
+
+    // Hjørner i bruk
+    let WARP_CORNERS = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') || JSON.parse(JSON.stringify(DEFAULT_CORNERS));
+
+    // Rektangulær overlay (alltid synlig som “bakgrunn”) – hjelper ved kalibrering
+    let rectOverlay = null;
+    function updateRectOverlay(){
+      try{ if(rectOverlay) { map.removeLayer(rectOverlay); rectOverlay=null; } }catch(_){ }
+      const lats = [WARP_CORNERS.NW[0], WARP_CORNERS.NE[0], WARP_CORNERS.SE[0], WARP_CORNERS.SW[0]];
+      const lngs = [WARP_CORNERS.NW[1], WARP_CORNERS.NE[1], WARP_CORNERS.SE[1], WARP_CORNERS.SW[1]];
+      const sw = L.latLng(Math.min(...lats), Math.min(...lngs));
+      const ne = L.latLng(Math.max(...lats), Math.max(...lngs));
+      rectOverlay = L.imageOverlay(IMAGE_URL + '?v=' + Date.now(), L.latLngBounds(sw, ne), { opacity: 0.4, interactive: false });
+      rectOverlay.addTo(map);
+    }
+
+    // --- 2D warp-lag (flat, robust)
+    class Warp2DLayer extends L.Layer{
+      constructor(img){ super(); this._img = img; }
+      onAdd(map){ this._map=map; this._c=L.DomUtil.create('canvas','leaflet-warp2d'); this._ctx=this._c.getContext('2d'); map.getPanes().overlayPane.appendChild(this._c); this._onMv=this._draw.bind(this); map.on('move zoom viewreset resize', this._onMv); this._resize(); this._draw(); }
+      onRemove(map){ map.off('move zoom viewreset resize', this._onMv); this._c.remove(); }
+      setCorners(c){ this._corners=c; this._draw(); }
+      _resize(){ const s=map.getSize(); this._c.width=s.x; this._c.height=s.y; L.DomUtil.setPosition(this._c, L.point(0,0)); }
+      _draw(){ if(!this._corners||!this._img.complete) return; this._resize(); const s=map.getSize(); const ctx=this._ctx; ctx.clearRect(0,0,s.x,s.y);
+        const p=[ map.latLngToLayerPoint(this._corners[0]), map.latLngToLayerPoint(this._corners[1]), map.latLngToLayerPoint(this._corners[2]), map.latLngToLayerPoint(this._corners[3]) ];
+        // tri A (NW,NE,SE)
+        this._drawTri(ctx, [p[0],p[1],p[2]], [0,0, this._img.width,0, this._img.width,this._img.height]);
+        // tri B (NW,SE,SW)
+        this._drawTri(ctx, [p[0],p[2],p[3]], [0,0, this._img.width,this._img.height, 0,this._img.height]);
       }
-      logEl.textContent += "\n" + parts.join(' ');
-      logEl.scrollTop = logEl.scrollHeight;
-    }
-    window.__w = w;
-    window.addEventListener('error', function(e){ w('[window.error]', e.message); if (e.error && e.error.stack) w(e.error.stack); });
-    window.addEventListener('unhandledrejection', function(e){ w('[unhandledrejection]', (e.reason && e.reason.message) ? e.reason.message : String(e.reason)); });
-    ['log','warn','error'].forEach(function(k){ var orig = console[k]; console[k] = function(){ w('[console.'+k+']', Array.prototype.slice.call(arguments).join(' ')); if (orig) try{ orig.apply(console, arguments); }catch(_){} }; });
-    document.addEventListener('keydown', function(e){ if ((e.key||'').toLowerCase()==='d') logEl.classList.toggle('hide'); });
-    w('Feillogger aktiv.');
-  })();
-  </script>
-
-  <!-- 2) Leaflet JS i egen tag (hvis denne feiler, ser vi det i loggen over) -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" onload="__w('Leaflet lastet.')" onerror="__w('Klarte ikke laste Leaflet.js')"></script>
-
-  <!-- 3) Hovedapp i egen tag (ENKEL – ingen warp/tegn, kun rektangulært bilde + POIs) -->
-  <script>
-  (function(){
-    function start(){
-      if (!window.L) { __w('Leaflet er ikke lastet, avbryter.'); return; }
-      __w('Init kart …');
-      var map = L.map('map').setView([59.48, 10.98], 11);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OSM' })
-        .on('load', function(){ __w('OSM-tiles lastet.'); })
-        .addTo(map);
-
-      // Hjørner (fra deg)
-      var WARP_CORNERS = {
-        NW: [59.54593535667747, 10.765142440795898],
-        NE: [59.539561484456776, 11.201162338256838],
-        SE: [59.380786150970934, 11.190948486328127],
-        SW: [59.387167906588274, 10.756945610046387]
-      };
-
-      // 3a) Vis Turkart.png rektangulært (min/max av hjørnene) – garantert synlig hvis fila finnes
-      var lats = [WARP_CORNERS.NW[0], WARP_CORNERS.NE[0], WARP_CORNERS.SE[0], WARP_CORNERS.SW[0]];
-      var lngs = [WARP_CORNERS.NW[1], WARP_CORNERS.NE[1], WARP_CORNERS.SE[1], WARP_CORNERS.SW[1]];
-      var sw = L.latLng(Math.min.apply(null, lats), Math.min.apply(null, lngs));
-      var ne = L.latLng(Math.max.apply(null, lats), Math.max.apply(null, lngs));
-
-      // Last bilde eksplisitt for å logge suksess/størrelse
-      var img = new Image();
-      img.onload = function(){
-        __w('Turkart.png lastet: ' + img.width + 'x' + img.height);
-        try {
-          L.imageOverlay('Turkart.png?v=' + Date.now(), L.latLngBounds(sw, ne), { opacity: 0.7 }).addTo(map);
-          __w('La til rektangulær overlay.');
-        } catch (e) {
-          __w('Klarte ikke legge til overlay:', e.message);
-        }
-      };
-      img.onerror = function(){
-        __w('Fant ikke Turkart.png i rotmappa. Test URL i ny fane: /Turkart.png');
-      };
-      img.src = 'Turkart.png?v=' + Date.now();
-
-      // 3b) POIs (leser samme format som før)
-      fetch('pois.json', { cache: 'no-store' })
-        .then(function(res){ __w('pois.json status ' + res.status); return res.ok ? res.json() : Promise.reject('HTTP ' + res.status); })
-        .then(function(data){
-          var points = Array.isArray(data.points) ? data.points : (Array.isArray(data) ? data : []);
-          __w('POI punkter: ' + points.length);
-          points.forEach(function(p){
-            L.marker([p.lat, p.lng]).addTo(map).bindPopup((p.title||'Uten navn'));
-          });
-        })
-        .catch(function(err){ __w('Kunne ikke laste POIs: ' + err); });
-
-      // 3c) Eksponer for enkel sjekk
-      window.Kartvaaler = { map: map };
-      __w('Klar. Hvis bildet ikke synes, sjekk loggen over for feil.');
+      _drawTri(ctx, P, T){ const [x0,y0,x1,y1,x2,y2]=T; const [p0,p1,p2]=P; const denom=(x0*(y1-y2)+x1*(y2-y0)+x2*(y0-y1))||1;
+        const a=(p0.x*(y1-y2)+p1.x*(y2-y0)+p2.x*(y0-y1))/denom;
+        const b=(p0.y*(y1-y2)+p1.y*(y2-y0)+p2.y*(y0-y1))/denom;
+        const c=(p0.x*(x2-x1)+p1.x*(x0-x2)+p2.x*(x1-x0))/denom;
+        const d=(p0.y*(x2-x1)+p1.y*(x0-x2)+p2.y*(x1-x0))/denom;
+        const e=(p0.x*(x1*y2-x2*y1)+p1.x*(x2*y0-x0*y2)+p2.x*(x0*y1-x1*y0))/denom;
+        const f=(p0.y*(x1*y2-x2*y1)+p1.y*(x2*y0-x0*y2)+p2.y*(x0*y1-x1*y0))/denom;
+        ctx.save(); ctx.setTransform(a,b,c,d,e,f); ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x1,y1); ctx.lineTo(x2,y2); ctx.closePath(); ctx.clip(); ctx.drawImage(this._img,0,0); ctx.restore(); }
     }
 
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
-  })();
-  </script>
+    let warpLayer = null;
 
-  <noscript>
-    <div style="position:fixed;inset:10px;background:#fff;border:2px solid #f33;padding:12px;border-radius:8px;z-index:3000;font:14px system-ui,sans-serif;">JavaScript er slått av. Slå på JavaScript for å vise kartet.</div>
-  </noscript>
+    // --- Kalibrering: fire uavhengige hjørnemarkører ---
+    const cornerMarkers = {}; let calOn=false;
+    function updateFromMarkers(){ for(const k of ['NW','NE','SE','SW']){ const m=cornerMarkers[k]; if(!m) continue; const ll=m.getLatLng(); WARP_CORNERS[k]=[ll.lat,ll.lng]; }
+      if (warpLayer) warpLayer.setCorners([ WARP_CORNERS.NW, WARP_CORNERS.NE, WARP_CORNERS.SE, WARP_CORNERS.SW ]);
+      updateRectOverlay(); localStorage.setItem(STORAGE_KEY, JSON.stringify(WARP_CORNERS));
+    }
+    function setCal(on){ calOn = (typeof on==='boolean') ? on : !calOn; btnCalibrate.classList.toggle('primary', calOn); btnCalibrate.textContent = calOn ? 'Kalibrer (PÅ)' : 'Kalibrer';
+      if (calOn){ for (const k of ['NW','NE','SE','SW']){ const m = cornerMarkers[k] || L.marker(WARP_CORNERS[k], { draggable:true, zIndexOffset:900 }).bindTooltip(k, { permanent:true, direction:'top', offset:[0,-12] }); if(!cornerMarkers[k]){ m.on('drag', updateFromMarkers); cornerMarkers[k]=m; } m.setLatLng(WARP_CORNERS[k]).addTo(map).openTooltip(); } updateFromMarkers(); }
+      else { for (const k of Object.keys(cornerMarkers)) try{ map.removeLayer(cornerMarkers[k]); }catch(_){ } }
+    }
+
+    btnCalibrate.addEventListener('click', ()=> setCal());
+    btnCopy.addEventListener('click', async ()=>{ const t='WARP_CORNERS = '+JSON.stringify(WARP_CORNERS, null, 2); try{ await navigator.clipboard.writeText(t); setStatus('Hjørner kopiert til utklippstavle'); } catch(_){ setStatus('Kopi feilet – marker teksten manuelt'); } });
+    btnSaveCorners.addEventListener('click', ()=>{ localStorage.setItem(STORAGE_KEY, JSON.stringify(WARP_CORNERS)); setStatus('Hjørner lagret lokalt'); });
+    btnLoadCorners.addEventListener('click', ()=>{ const s=localStorage.getItem(STORAGE_KEY); if(!s){ setStatus('Ingen lagrede hjørner funnet'); return; } try{ WARP_CORNERS = JSON.parse(s); if (warpLayer) warpLayer.setCorners([ WARP_CORNERS.NW, WARP_CORNERS.NE, WARP_CORNERS.SE, WARP_CORNERS.SW ]); updateRectOverlay(); setStatus('Hjørner lastet fra lokal lagring'); }catch(e){ setStatus('Kunne ikke lese lagrede hjørner'); } });
+    btnReset.addEventListener('click', ()=>{ WARP_CORNERS = JSON.parse(JSON.stringify(DEFAULT_CORNERS)); if (warpLayer) warpLayer.setCorners([ WARP_CORNERS.NW, WARP_CORNERS.NE, WARP_CORNERS.SE, WARP_CORNERS.SW ]); updateRectOverlay(); setStatus('Hjørner tilbakestilt'); });
+
+    // --- Last bilde + start lag ---
+    const img = new Image();
+    img.onload = ()=>{
+      setStatus(`Bilde lastet ${img.width}×${img.height}`);
+      updateRectOverlay();
+      warpLayer = new Warp2DLayer(img); warpLayer.addTo(map);
+      warpLayer.setCorners([ WARP_CORNERS.NW, WARP_CORNERS.NE, WARP_CORNERS.SE, WARP_CORNERS.SW ]);
+      setCal(true); // Start i kalibreringsmodus for enkel justering
+    };
+    img.onerror = ()=>{ setStatus('Fant ikke Turkart.png – sjekk filnavn/sti'); };
+    img.src = IMAGE_URL + '?v=' + Date.now();
+
+    // --- POIs vises fortsatt (read-only) for referanse
+    fetch('pois.json', { cache:'no-store' })
+      .then(r => r.ok ? r.json() : [])
+      .then(data => { const points = Array.isArray(data.points) ? data.points : (Array.isArray(data)? data: []); points.forEach(p => L.marker([p.lat,p.lng]).addTo(map).bindPopup(p.title||'Uten navn')); })
+      .catch(()=>{});
+  </script>
 </body>
 </html>
