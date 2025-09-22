@@ -44,7 +44,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <script>
 (function(){
-  const VERSION='v-debug2 view-only ' + new Date().toISOString().slice(0,16).replace('T',' ');
+  const VERSION='v-debug2 view-only + routes ' + new Date().toISOString().slice(0,16).replace('T',' ') + new Date().toISOString().slice(0,16).replace('T',' ');
   const statusEl=document.getElementById('status');
   const setStatus=(m)=> statusEl.textContent=m;
   document.getElementById('ver').textContent=VERSION;
@@ -153,23 +153,26 @@
 
   // Bare tillatte kategorier: Interessepunkter, Skole/Barnehage, Utsiktspunkt, Naturreservat, Aktivitet
   function colorForCategory(cat){
-    const s=(cat||'').toString().toLowerCase();
-    if(s.includes('interessepunkt')) return '#14b8a6';
-    if(s.includes('skole')||s.includes('barnehage')) return '#f59e0b';
-    if(s.includes('utsikt')) return '#8b5cf6';
-    if(s.includes('naturreservat')) return '#16a34a';
-    if(s.includes('aktivitet')) return '#f97316';
+    const key=(cat||'').toString().toLowerCase();
+    const mapC={
+      'parkering':'#0ea5e9','badeplass':'#06b6d4','utsiktspunkt':'#8b5cf6','husmannsplass':'#92400e','båtslipp':'#0284c7',
+      'matbutikk':'#22c55e','bensinstasjon':'#ef4444','aktivitet':'#f97316','kulturminne':'#b91c1c','interessepunkt':'#14b8a6',
+      'naturreservat':'#16a34a','skole':'#f59e0b','barnehage':'#f59e0b','turforslag':'#3b82f6','turmål':'#22c55e',
+      '': '#6b7280'
+    };
+    // treff også på delstrenger ("utsikt" -> utsiktspunkt)
+    for(const k of Object.keys(mapC)){
+      if(k && key.includes(k)) return mapC[k];
+    }
     return '#6b7280';
   }
   function isAllowedCategory(cat){
     const s=(cat||'').toString().toLowerCase();
     return (
-      s.includes('interessepunkt') ||
-      s.includes('skole') ||
-      s.includes('barnehage') ||
-      s.includes('utsikt') ||
-      s.includes('naturreservat') ||
-      s.includes('aktivitet')
+      s.includes('interessepunkt') || s.includes('skole') || s.includes('barnehage') || s.includes('utsikt') ||
+      s.includes('naturreservat') || s.includes('aktivitet') || s.includes('turforslag') || s.includes('turmål') ||
+      s.includes('parkering') || s.includes('badeplass') || s.includes('husmannsplass') || s.includes('båtslipp') ||
+      s.includes('matbutikk') || s.includes('bensinstasjon') || s.includes('kulturminne')
     );
   }
   function iconHtml(color){ return `<svg width="24" height="24" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><path d=\"M14 1 C8 1 4 5.5 4 10.5 c0 6.5 8 13 10 16 2-3 10-9.5 10-16 C24 5.5 20 1 14 1z\" fill=\"${color}\" stroke=\"white\" stroke-width=\"2\"/><circle cx=\"14\" cy=\"11\" r=\"3.5\" fill=\"white\"/></svg>`; }
