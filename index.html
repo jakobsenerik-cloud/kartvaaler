@@ -1,132 +1,228 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="no">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-  <title>Kartvaaler – VISNING (rollback stable v1)</title>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
+<title>Kartvaaler – Mobil-zoom Fix (v-debug2) – VISNING (uten redigering)</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+<style>
+  html, body { height: 100%; margin: 0; background:#eaf0f4; }
+  #map { position: absolute; inset: 0; }
+  #ui { position: absolute; z-index: 1000; top: 10px; left: 10px; background: rgba(255,255,255,.95); padding: 8px 10px; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.12); font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  #ui label { display:flex; align-items:center; gap:6px }
+  #status { font-size: 12px; color:#334155 }
+  #ver { font-size:12px; color:#0f172a; background:#e2e8f0; border-radius:6px; padding:2px 6px }
+  input[type=range]{ width:120px }
+  button{ padding:6px 10px; border:1px solid #d0d7de; border-radius:8px; background:#fff; cursor:pointer }
+  .leaflet-container { background:#e8eef2; }
 
-  <!-- Leaflet -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  /* Canvas: lar muse-drag/pan passere til kartet */
+  .warp-pane, .warp-pane canvas { pointer-events: none; }
+  .warp-pane canvas { position:absolute; left:0; top:0; }
 
-  <style>
-    html, body, #map { height: 100%; margin: 0; }
-    /* Warp-canvas legges i overlayPane og er klikk-gjennom (mobil-zoom fix) */
-    .leaflet-overlay-pane canvas.leaflet-warp2d { position:absolute; inset:0; pointer-events:none; z-index: 450; }
-    .leaflet-overlay-pane img.leaflet-image-layer { z-index: 440; }
-
-    /* En liten statusindikator (kan fjernes) */
-    .status { position: fixed; z-index: 1100; right: 10px; top: 10px; background: rgba(255,255,255,.92); padding: 6px 8px; border-radius: 8px; font: 12px/1.4 system-ui, sans-serif; box-shadow: 0 4px 12px rgba(0,0,0,.12);} 
-  </style>
+  /* POI ikoner */
+  .poi-icon svg { display:block }
+  .leaflet-tooltip.mytooltip { background:rgba(255,255,255,.95); border:1px solid #e5e7eb; color:#111827; border-radius:6px; box-shadow:0 6px 16px rgba(0,0,0,.12); }
+  .leaflet-tooltip.mytooltip::before { border-top-color:#e5e7eb; }
+</style>
 </head>
 <body>
   <div id="map"></div>
-  <div id="status" class="status">Laster…</div>
+  <div id="ui">
+    <button id="fitBtn">Vis kartområdet</button>
+    <label>Opasitet <input id="opacity" type="range" min="0" max="1" step="0.01" value="0.95"></label>
+    <button id="centerMe">Sentrer meg</button>
+    <button id="startPrecise">Vis min posisjon</button>
+    <button id="stopWatch">Stopp</button>
 
-  <script>
-    // --- Fast konfig (samme som opprinnelig) ---
-    const IMAGE_URL = 'Turkart.png';
-    const WARP_CORNERS = {
-      NW: [59.54593535667747, 10.765142440795898],
-      NE: [59.539561484456776, 11.201162338256838],
-      SE: [59.380786150970934, 11.190948486328127],
-      SW: [59.387167906588274, 10.756945610046387]
-    };
+    <label style="margin-left:6px"><input id="poiToggle" type="checkbox" checked> Vis punkter</label>
 
-    const MAP_CENTER = [59.48, 10.98];
-    const MAP_ZOOM = 11;
+    <span id="status">Laster…</span>
+    <span id="ver"></span>
+  </div>
 
-    const $status = document.getElementById('status');
-    function setStatus(s){ $status.textContent = s; }
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script>
+(function(){
+  const VERSION='v-debug2 view-only ' + new Date().toISOString().slice(0,16).replace('T',' ');
+  const statusEl=document.getElementById('status');
+  const setStatus=(m)=> statusEl.textContent=m;
+  document.getElementById('ver').textContent=VERSION;
+  window.addEventListener('error', e=> setStatus('JS-feil: '+(e.message||'ukjent')));
+  window.addEventListener('unhandledrejection', e=>{const r=e.reason||{}; setStatus('Promise-feil: '+(r.message||r));});
 
-    // --- Kart ---
-    const map = L.map('map', { zoomControl:true, attributionControl:true }).setView(MAP_CENTER, MAP_ZOOM);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OSM' }).addTo(map);
+  // --- konfig ---
+  const IMAGE_URL='Turkart.png?v='+Date.now();
+  // Hjørner i rekkefølge: NW, NE, SE, SW (WGS84 / lat,lng)
+  const CORNERS=[
+    [59.54593535667747, 10.765142440795898],
+    [59.539561484456776, 11.201162338256838],
+    [59.380786150970934, 11.190948486328127],
+    [59.387167906588274, 10.756945610046387]
+  ];
 
-    // --- Robust 2D warp‑lag (flat) ---
-    class Warp2DLayer extends L.Layer{
-      constructor(img){ super(); this._img = img; }
-      onAdd(map){ this._map=map; this._c=L.DomUtil.create('canvas','leaflet-warp2d'); this._ctx=this._c.getContext('2d'); map.getPanes().overlayPane.appendChild(this._c); this._onMv=this._draw.bind(this); map.on('move zoom viewreset resize', this._onMv); this._resize(); this._draw(); }
-      onRemove(map){ map.off('move zoom viewreset resize', this._onMv); this._c.remove(); }
-      setCorners(c){ this._corners=c; this._draw(); }
-      _resize(){ const s=this._map.getSize(); this._c.width=s.x; this._c.height=s.y; L.DomUtil.setPosition(this._c, L.point(0,0)); }
-      _draw(){ if(!this._corners||!this._img.complete) return; this._resize(); const s=this._map.getSize(); const ctx=this._ctx; ctx.clearRect(0,0,s.x,s.y);
-        const p=[ this._map.latLngToLayerPoint(this._corners[0]), this._map.latLngToLayerPoint(this._corners[1]), this._map.latLngToLayerPoint(this._corners[2]), this._map.latLngToLayerPoint(this._corners[3]) ];
-        // tri A (NW,NE,SE)
-        this._drawTri(ctx, [p[0],p[1],p[2]], [0,0, this._img.width,0, this._img.width,this._img.height]);
-        // tri B (NW,SE,SW)
-        this._drawTri(ctx, [p[0],p[2],p[3]], [0,0, this._img.width,this._img.height, 0,this._img.height]);
+  // --- Leaflet kart ---
+  const map=L.map('map', {
+    zoomControl:true,
+    zoomAnimation:false,
+    fadeAnimation:false,
+    inertia:true,
+    wheelDebounceTime: 30,
+    wheelPxPerZoomLevel: 120,
+    tap:false
+  });
+  // sikre panorering/zoom på PC
+  map.dragging.enable(); map.scrollWheelZoom.enable(); map.keyboard.enable();
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© OpenStreetMap-bidragsytere'
+  }).addTo(map);
+
+  // --- Canvas warp i overlayPane, forankret til lagets (0,0) ---
+  const warpRoot = L.DomUtil.create('div','warp-pane', map.getPanes().overlayPane);
+  warpRoot.style.pointerEvents = 'none';
+  const canvas=document.createElement('canvas');
+  const ctx=canvas.getContext('2d');
+  warpRoot.appendChild(canvas);
+  let img=new Image(), imgW=0, imgH=0, layerOrigin=L.point(0,0);
+  img.onload=()=>{ imgW=img.naturalWidth; imgH=img.naturalHeight; renderWarp(false); setStatus('Klar'); };
+  img.onerror=()=> setStatus('Klarte ikke å laste Turkart.png');
+  img.src=IMAGE_URL;
+
+  const CORNERS_LL=CORNERS.map(([lat,lng])=>L.latLng(lat,lng));
+  const bounds=L.latLngBounds(CORNERS_LL);
+  function fitView(){ map.fitBounds(bounds, { padding:[10,10] }); }
+  document.getElementById('fitBtn').onclick=fitView;
+
+  function resizeCanvas(){
+    const sz = map.getSize();
+    canvas.width = sz.x; canvas.height = sz.y;
+    const pos = map.containerPointToLayerPoint([0,0]);
+    layerOrigin = L.point(pos.x, pos.y);
+    L.DomUtil.setPosition(canvas, pos);
+  }
+  function setTriTransform(ctx,s0,s1,s2,d0,d1,d2){
+    const a11=s1.x-s0.x,a12=s2.x-s0.x,a21=s1.y-s0.y,a22=s2.y-s0.y; const det=a11*a22-a12*a21; if(Math.abs(det)<1e-12){ ctx.setTransform(1,0,0,1,0,0); return; }
+    const inv11=a22/det, inv12=-a12/det, inv13=-(inv11*s0.x+inv12*s0.y);
+    const inv21=-a21/det, inv22=a11/det, inv23=-(inv21*s0.x+inv22*s0.y);
+    const b11=d1.x-d0.x, b12=d2.x-d0.x, b13=d0.x; const b21=d1.y-d0.y, b22=d2.y-d0.y, b23=d0.y;
+    const A=b11*inv11+b12*inv21, B=b21*inv11+b22*inv21; const C=b11*inv12+b12*inv22, D=b21*inv12+b22*inv22; const E=b11*inv13+b12*inv23+b13, F=b21*inv13+b22*inv23+b23;
+    ctx.setTransform(A,B,C,D,E,F);
+  }
+  const lerp=(a,b,t)=> a+(b-a)*t; const lerpPt=(p,q,t)=> ({x:lerp(p.x,q.x,t), y:lerp(p.y,q.y,t)});
+
+  const opacity=document.getElementById('opacity');
+  opacity.addEventListener('input', ()=> renderWarp(false));
+
+  function llToCanvas(ll){ const p = map.latLngToLayerPoint(ll); return { x: p.x - layerOrigin.x, y: p.y - layerOrigin.y }; }
+
+  function renderWarp(quick=false){ if(!imgW||!imgH) return; resizeCanvas(); ctx.save(); ctx.clearRect(0,0,canvas.width,canvas.height); ctx.globalAlpha=parseFloat(opacity.value||'0.95');
+    const [NW,NE,SE,SW]=CORNERS_LL.map(ll=>llToCanvas(ll));
+    const COLS= quick? 8 : 22, ROWS= quick? 8 : 22;
+    for(let j=0;j<ROWS;j++){
+      const v0=j/ROWS, v1=(j+1)/ROWS; const L0=lerpPt(NW,SW,v0), R0=lerpPt(NE,SE,v0); const L1=lerpPt(NW,SW,v1), R1=lerpPt(NE,SE,v1);
+      for(let i=0;i<COLS;i++){
+        const u0=i/COLS, u1=(i+1)/COLS; const Q00=lerpPt(L0,R0,u0), Q10=lerpPt(L0,R0,u1); const Q01=lerpPt(L1,R1,u0), Q11=lerpPt(L1,R1,u1);
+        ctx.save(); ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q10.x,Q10.y); ctx.lineTo(Q11.x,Q11.y); ctx.closePath(); ctx.clip();
+        const S00={x:u0*imgW, y:v0*imgH}, S10={x:u1*imgW, y:v0*imgH}, S11={x:u1*imgW, y:v1*imgH}; setTriTransform(ctx,S00,S10,S11,Q00,Q10,Q11); ctx.drawImage(img,0,0); ctx.restore();
+        ctx.save(); ctx.beginPath(); ctx.moveTo(Q00.x,Q00.y); ctx.lineTo(Q11.x,Q11.y); ctx.lineTo(Q01.x,Q01.y); ctx.closePath(); ctx.clip();
+        const S01={x:u0*imgW, y:v1*imgH}; setTriTransform(ctx,S00,S11,S01,Q00,Q11,Q01); ctx.drawImage(img,0,0); ctx.restore();
       }
-      _drawTri(ctx, P, T){ const [x0,y0,x1,y1,x2,y2]=T; const [p0,p1,p2]=P; const denom=(x0*(y1-y2)+x1*(y2-y0)+x2*(y0-y1))||1;
-        const a=(p0.x*(y1-y2)+p1.x*(y2-y0)+p2.x*(y0-y1))/denom;
-        const b=(p0.y*(y1-y2)+p1.y*(y2-y0)+p2.y*(y0-y1))/denom;
-        const c=(p0.x*(x2-x1)+p1.x*(x0-x2)+p2.x*(x1-x0))/denom;
-        const d=(p0.y*(x2-x1)+p1.y*(x0-x2)+p2.y*(x1-x0))/denom;
-        const e=(p0.x*(x1*y2-x2*y1)+p1.x*(x2*y0-x0*y2)+p2.x*(x0*y1-x1*y0))/denom;
-        const f=(p0.y*(x1*y2-x2*y1)+p1.y*(x2*y0-x0*y2)+p2.y*(x0*y1-x1*y0))/denom;
-        ctx.save(); ctx.setTransform(a,b,c,d,e,f); ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x1,y1); ctx.lineTo(x2,y2); ctx.closePath(); ctx.clip(); ctx.drawImage(this._img,0,0); ctx.restore(); }
     }
+    ctx.restore(); }
 
-    // Rektangulær fallback (viser alltid når fil finnes) – bak warp for å hjelpe visuelt
-    let rectOverlay=null;
-    function updateRectOverlay(){ try{ if(rectOverlay){ map.removeLayer(rectOverlay); rectOverlay=null; } }catch(_){ }
-      const lats=[WARP_CORNERS.NW[0],WARP_CORNERS.NE[0],WARP_CORNERS.SE[0],WARP_CORNERS.SW[0]];
-      const lngs=[WARP_CORNERS.NW[1],WARP_CORNERS.NE[1],WARP_CORNERS.SE[1],WARP_CORNERS.SW[1]];
-      const sw=L.latLng(Math.min(...lats), Math.min(...lngs));
-      const ne=L.latLng(Math.max(...lats), Math.max(...lngs));
-      rectOverlay=L.imageOverlay(IMAGE_URL+'?v='+Date.now(), L.latLngBounds(sw,ne), { opacity:0.25, interactive:false });
-      rectOverlay.addTo(map);
-    }
+  let rafPending=false; function requestQuick(){ if(rafPending) return; rafPending=true; requestAnimationFrame(()=>{ rafPending=false; renderWarp(true); }); }
+  map.on('move', requestQuick); map.on('zoom', requestQuick); map.on('moveend zoomend resize', ()=> renderWarp(false));
+  fitView();
 
-    // --- Last bildet og legg på warp + fallback ---
-    let warpLayer=null; const img=new Image();
-    img.onload = ()=>{ setStatus('Bilde ok · '+img.width+'×'+img.height); updateRectOverlay(); warpLayer=new Warp2DLayer(img); warpLayer.addTo(map); warpLayer.setCorners([ WARP_CORNERS.NW, WARP_CORNERS.NE, WARP_CORNERS.SE, WARP_CORNERS.SW ]); };
-    img.onerror = ()=>{ setStatus('Fant ikke Turkart.png i rot'); };
-    img.src = IMAGE_URL + '?v=' + Date.now();
+  // --- GPS ---
+  const dropIcon=L.divIcon({ className:'poi-icon', html:`<svg width="24" height="24" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><path d=\"M14 1 C8 1 4 5.5 4 10.5 c0 6.5 8 13 10 16 2-3 10-9.5 10-16 C24 5.5 20 1 14 1z\" fill=\"#2563eb\" stroke=\"white\" stroke-width=\"2\"/><circle cx=\"14\" cy=\"11\" r=\"3.5\" fill=\"white\"/></svg>` });
+  let userMarker=null, accCircle=null, watchId=null;
+  function showUser(lat,lng,acc){ const ll=L.latLng(lat,lng); if(!userMarker){ userMarker=L.marker(ll,{icon:dropIcon}).addTo(map); } else userMarker.setLatLng(ll); if(!accCircle){ accCircle=L.circle(ll,{ radius:acc||0, color:'#2563eb', weight:1, fillOpacity:0.08 }).addTo(map); } accCircle.setLatLng(ll); if(acc!=null) accCircle.setRadius(acc); }
+  function startPrecise(){ if(!navigator.geolocation){ setStatus('Geolocation ikke støttet'); return; } stopWatch(); setStatus('Sporer (presis)…'); watchId=navigator.geolocation.watchPosition(pos=>{ showUser(pos.coords.latitude,pos.coords.longitude,pos.coords.accuracy); setStatus(`Sporer: ${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)} (±${Math.round(pos.coords.accuracy)} m)`); }, err=>{ const code=({1:'PERMISSION_DENIED',2:'POSITION_UNAVAILABLE',3:'TIMEOUT'})[err.code]||'ERROR'; setStatus(`Sporing feilet: ${code} – ${err.message}`); }, { enableHighAccuracy:true, timeout:15000, maximumAge:0 }); }
+  function centerMe(){ if(userMarker){ map.panTo(userMarker.getLatLng()); return; } if(!navigator.geolocation){ setStatus('Geolocation ikke støttet'); return; } setStatus('Henter posisjon…'); navigator.geolocation.getCurrentPosition(pos=>{ showUser(pos.coords.latitude,pos.coords.longitude,pos.coords.accuracy); map.setView([pos.coords.latitude,pos.coords.longitude], map.getZoom()); setStatus(`Posisjon: ${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)} (±${Math.round(pos.coords.accuracy)} m)`); }, err=>{ const code=({1:'PERMISSION_DENIED',2:'POSITION_UNAVAILABLE',3:'TIMEOUT'})[err.code]||'ERROR'; setStatus(`Kunne ikke hente posisjon: ${code} – ${err.message}`); }, { enableHighAccuracy:false, timeout:8000, maximumAge:120000 }); }
+  function stopWatch(){ if(watchId!=null){ navigator.geolocation.clearWatch(watchId); watchId=null; setStatus('Sporing stoppet'); } }
+  document.getElementById('startPrecise').onclick=startPrecise; document.getElementById('centerMe').onclick=centerMe; document.getElementById('stopWatch').onclick=stopWatch;
 
-    // --- POIs (read-only) + ruter ved popup ---
-    const poiLayer = L.featureGroup().addTo(map);
-    const routeLayer = L.featureGroup().addTo(map);
+  // --- POI-lag og ruter (VISNING) ---
+  const poiToggle=document.getElementById('poiToggle');
+  const poiLayer=L.layerGroup().addTo(map);
+  const routeLines=new Map();
+  let POIS=[];
 
-    function makePopupHTML(p){ const t=p.title||'Uten navn'; const d=p.desc||''; return `<div style="min-width:180px"><strong>${escapeHTML(t)}</strong>${d?`<p style=\"margin:6px 0 0\">${escapeHTML(d)}</p>`:''}</div>`; }
-    function escapeHTML(s=''){ return String(s).replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;' }[m])); }
+  // Bare tillatte kategorier: Interessepunkter, Skole/Barnehage, Utsiktspunkt, Naturreservat, Aktivitet
+  function colorForCategory(cat){
+    const s=(cat||'').toString().toLowerCase();
+    if(s.includes('interessepunkt')) return '#14b8a6';
+    if(s.includes('skole')||s.includes('barnehage')) return '#f59e0b';
+    if(s.includes('utsikt')) return '#8b5cf6';
+    if(s.includes('naturreservat')) return '#16a34a';
+    if(s.includes('aktivitet')) return '#f97316';
+    return '#6b7280';
+  }
+  function isAllowedCategory(cat){
+    const s=(cat||'').toString().toLowerCase();
+    return (
+      s.includes('interessepunkt') ||
+      s.includes('skole') ||
+      s.includes('barnehage') ||
+      s.includes('utsikt') ||
+      s.includes('naturreservat') ||
+      s.includes('aktivitet')
+    );
+  }
+  function iconHtml(color){ return `<svg width="24" height="24" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><path d=\"M14 1 C8 1 4 5.5 4 10.5 c0 6.5 8 13 10 16 2-3 10-9.5 10-16 C24 5.5 20 1 14 1z\" fill=\"${color}\" stroke=\"white\" stroke-width=\"2\"/><circle cx=\"14\" cy=\"11\" r=\"3.5\" fill=\"white\"/></svg>`; }
+  function mkIcon(color){ return L.divIcon({ className:'poi-icon', html:iconHtml(color), iconSize:[24,24], iconAnchor:[12,22] }); }
 
-    function addMarker(p){ const m=L.marker([p.lat,p.lng]).addTo(poiLayer).bindPopup(makePopupHTML(p));
-      m.on('popupopen', ()=>{ drawRoutesForPoint(p); });
-      m.on('popupclose', ()=>{ routeLayer.clearLayers(); });
-      return m; }
+  function toLatLngAny(pt){ if(Array.isArray(pt)){ const a=parseFloat(pt[0]); const b=parseFloat(pt[1]); if(Number.isNaN(a)||Number.isNaN(b)) return null; if(b>50 && a<30) return L.latLng(b,a); return L.latLng(a,b); } else if (pt && typeof pt==='object'){ const lat=parseFloat(pt.lat ?? pt.latitude ?? pt.y ?? pt[1]); const lng=parseFloat(pt.lng ?? pt.lon ?? pt.longitude ?? pt.x ?? pt[0]); if(Number.isNaN(lat)||Number.isNaN(lng)) return null; return L.latLng(lat,lng);} return null; }
+  function normPath(path){ const out=[]; if(!Array.isArray(path)) return out; for(const pt of path){ const ll=toLatLngAny(pt); if(ll) out.push(ll);} return out; }
 
-    function drawRoutesForPoint(p){ routeLayer.clearLayers();
-      // Støtt flere mulige feltnavn
-      // 1) p.route = [[lat,lng], ...]
-      if (Array.isArray(p.route) && p.route.length && Array.isArray(p.route[0])){
-        L.polyline(p.route, { color: p.color||'#0a7cff', weight:4, opacity:.9 }).addTo(routeLayer);
+  function buildPOIs(){
+    poiLayer.clearLayers();
+    for(const p of POIS){
+      // filter: vis kun tillatte kategorier
+      if(!isAllowedCategory(p.category)) continue;
+      if(typeof p.lat!=="number"||typeof p.lng!=="number") continue;
+      const color=p.color || colorForCategory(p.category);
+      const m=L.marker([p.lat,p.lng], { icon: mkIcon(color) }).addTo(poiLayer);
+      if(p.title) m.bindTooltip(p.title, { direction:'top', opacity:0.95, offset:[0,-18], className:'mytooltip' });
+      const parts=[];
+      parts.push(`<h3 style=\"margin:0 0 6px\">${escapeHtml(p.title||'Punkt')}</h3>`);
+      if(p.image) parts.push(`<img src=\"${escapeAttr(p.image)}\" style=\"max-width:240px;border-radius:8px;display:block;margin:6px 0\">`);
+      if(p.desc) parts.push(`<div style=\"margin:0 0 8px\">${escapeHtml(p.desc)}</div>`);
+      parts.push(`<div style=\"font-size:12px;color:#374151\">Kategori: ${escapeHtml(p.category||'—')} · Lat/Lng: ${(p.lat||0).toFixed(5)}, ${(p.lng||0).toFixed(5)}</div>`);
+      if(p.link) parts.push(`<div style=\"margin-top:6px\"><a href=\"${escapeAttr(p.link)}\" target=\"_blank\" rel=\"noopener\">Mer info ↗</a></div>`);
+      m.bindPopup(parts.join(''));
+
+      // Turforslag: vis rute i samme farge når popup åpnes; skjul ved lukking
+      if(Array.isArray(p.path) && p.path.length>=2){
+        const colorLine=color;
+        m.on('popupopen', ()=>{
+          if(routeLines.has(p.id)) return;
+          const latlngs=normPath(p.path);
+          if(latlngs.length<2) return;
+          const line=L.polyline(latlngs, { color: colorLine, weight:9, opacity:0.5, lineJoin:'round', lineCap:'round' }).addTo(map);
+          routeLines.set(p.id, line);
+        });
+        m.on('popupclose', ()=>{ const line=routeLines.get(p.id); if(line){ map.removeLayer(line); routeLines.delete(p.id);} });
       }
-      // 2) p.routes = [ [[lat,lng],...], ... ]
-      else if (Array.isArray(p.routes) && p.routes.length && Array.isArray(p.routes[0])){
-        p.routes.forEach(r => { if (Array.isArray(r) && r.length) L.polyline(r, { color: p.color||'#0a7cff', weight:4, opacity:.9 }).addTo(routeLayer); });
-      }
-      // 3) p.route.coords = [[lat,lng],...]
-      else if (p.route && Array.isArray(p.route.coords)){
-        L.polyline(p.route.coords, { color: p.route.color||p.color||'#0a7cff', weight:4, opacity:.9 }).addTo(routeLayer);
-      }
     }
+  }
 
-    async function loadPOIs(){
-      try{
-        const res = await fetch('pois.json', { cache:'no-store' });
-        if (!res.ok) throw new Error('HTTP '+res.status);
-        const data = await res.json();
-        const points = Array.isArray(data.points) ? data.points : (Array.isArray(data) ? data : []);
-        points.forEach(addMarker);
-        setStatus('Klar');
-      } catch(e){ setStatus('POIs mangler – viser bare kart og bilde'); }
-    }
+  function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+  function escapeAttr(s){ return String(s||'').replace(/\"/g,'&quot;'); }
 
-    loadPOIs();
+  // Last POI fra pois.json (read-only visning)
+  fetch('pois.json?v='+Date.now(), {cache:'no-store'})
+    .then(r=> r.ok ? r.json() : [])
+    .then(arr=>{ if(Array.isArray(arr)) { POIS=arr; buildPOIs(); setStatus('Klar (POI: '+arr.length+')'); } else { setStatus('Klar (0 POI)'); } })
+    .catch(()=>{ setStatus('Klar (fant ikke pois.json)'); });
 
-    // Eksponer minimal debug
-    window.Kartvaaler = { map };
-  </script>
+  // Toggle lag
+  document.getElementById('poiToggle').addEventListener('change', ()=>{ if(poiToggle.checked) poiLayer.addTo(map); else poiLayer.remove(); });
+
+})();
+</script>
 </body>
 </html>
